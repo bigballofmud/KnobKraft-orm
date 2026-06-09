@@ -338,10 +338,13 @@ IF(APPLE)
 
 	# For local unsigned builds, still embed Python so the app can find its runtime.
 	IF(NOT CODESIGN_CERTIFICATE_NAME)
+		get_filename_component(PYTHON_REAL_PATH "${PYTHON_EXECUTABLE}" REALPATH)
+		get_filename_component(PYTHON_BIN_DIR "${PYTHON_REAL_PATH}" DIRECTORY)
+		get_filename_component(PYTHON_FRAMEWORK_VERSION_DIR "${PYTHON_BIN_DIR}" DIRECTORY)
 		add_custom_command(
 				TARGET KnobKraftOrm POST_BUILD
 				COMMAND "${CMAKE_COMMAND}"
-					-DPYTHON_EXECUTABLE="${PYTHON_EXECUTABLE}"
+					-DPYTHON_SOURCE="${PYTHON_FRAMEWORK_VERSION_DIR}"
 					-DPYTHON_VERSION="${PYTHON_VERSION_TO_EMBED}"
 					-DAPP_BUNDLE="$<TARGET_BUNDLE_DIR:KnobKraftOrm>"
 					-P "${CMAKE_SOURCE_DIR}/cmake/embed_python_macos.cmake"

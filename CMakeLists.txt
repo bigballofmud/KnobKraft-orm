@@ -14,7 +14,7 @@ IF(APPLE)
   option(UNIVERSAL_BINARY "Compile Intel and Apple Silicon universal binaries for macOS" ON)
   if(UNIVERSAL_BINARY)
     message("Universal binaries for Apple are selected, building for Apple M1 and Intel")
-    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "" FORCE)
+    set(CMAKE_OSX_ARCHITECTURES "x86_64" CACHE STRING "" FORCE)
   endif()
 
   # If building for arm64 in any form, enforce macOS 11.0+
