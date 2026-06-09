@@ -48,6 +48,7 @@ TONE_NAME_LENGTH   = 10     # ASCII bytes at offset 0 of the tone common block
 TONE_STRIDE        = 256    # slot size; only 246 bytes are tone data, 10 are padding
 TONE_TEMP_BASE     = [0x04, 0x00, 0x00]   # Tone Temporary (string 1, slot 1)
 TONE_MEMORY_BASE   = [0x08, 0x00, 0x00]   # User tone bank start
+TONE_MAX_PAYLOAD   = 64     # max bytes per RQ1 chunk; GR-50 times out on large single requests
 
 SYSTEM_SETUP_ADDR  = [0x52, 0x00, 0x00]   # used for device detection
 SYSTEM_SETUP_SIZE  = 19
@@ -162,8 +163,15 @@ def _extract_tone_data(messages: List[int]) -> Tuple[Optional[int], List[int]]:
     """Scan a flat sysex byte list and return (tone_no or None, 246-byte data).
 
     Returns tone_no=None for an edit-buffer (Tone Temporary) message,
-    or tone_no=0..63 for a memory message.
+    or tone_no=0..63 for a memory message.  Handles both a single full-size
+    DT1 and the chunked DT1s produced by createProgramDumpRequest.
     """
+    tone_base_flat = _addr_to_int(TONE_MEMORY_BASE)
+    temp_base_flat = _addr_to_int(TONE_TEMP_BASE)
+
+    # slot (int or None for temp) -> {offset: data_bytes}
+    slots: Dict[Optional[int], Dict[int, List[int]]] = {}
+
     for start, end in knobkraft.sysex.findSysexDelimiters(messages):
         msg = messages[start:end]
         if not isOwnSysex(msg):
@@ -172,13 +180,33 @@ def _extract_tone_data(messages: List[int]) -> Tuple[Optional[int], List[int]]:
             command, address, data = _parse_message(msg)
         except ValueError:
             continue
-        if command != COMMAND_DT1 or len(data) != TONE_SIZE:
+        if command != COMMAND_DT1:
             continue
-        if _is_temp_tone(address, len(data)):
+
+        addr_flat = _addr_to_int(address)
+
+        if addr_flat == temp_base_flat and len(data) == TONE_SIZE:
             return None, data
-        tone_no = _tone_no_from_address(address)
-        if tone_no is not None:
-            return tone_no, data
+
+        delta = addr_flat - tone_base_flat
+        if 0 <= delta < TONE_COUNT * TONE_STRIDE:
+            slot = delta // TONE_STRIDE
+            offset = delta % TONE_STRIDE
+            if offset + len(data) <= TONE_SIZE:
+                slots.setdefault(slot, {})[offset] = data
+
+    for slot, chunk_map in slots.items():
+        assembled: List[int] = []
+        expected = 0
+        for off in sorted(chunk_map):
+            if off != expected:
+                break
+            assembled.extend(chunk_map[off])
+            expected += len(chunk_map[off])
+        else:
+            if len(assembled) == TONE_SIZE:
+                return slot, assembled
+
     raise ValueError("No valid GR-50 tone message found")
 
 
@@ -277,7 +305,16 @@ def isEditBufferDump(messages: List[int]) -> bool:
 def createProgramDumpRequest(channel: int, patchNo: int) -> List[int]:
     if patchNo >= PATCH_COUNT:
         tone_no = (patchNo - PATCH_COUNT) % TONE_COUNT
-        return _build_message(_device_id, COMMAND_RQ1, _tone_address(tone_no), _size_as_7bit(TONE_SIZE))
+        base_flat = _addr_to_int(_tone_address(tone_no))
+        result: List[int] = []
+        offset = 0
+        while offset < TONE_SIZE:
+            chunk = min(TONE_MAX_PAYLOAD, TONE_SIZE - offset)
+            result += _build_message(_device_id, COMMAND_RQ1,
+                                     _int_to_addr(base_flat + offset),
+                                     _size_as_7bit(chunk))
+            offset += chunk
+        return result
     return _build_message(_device_id, COMMAND_RQ1, _patch_address(patchNo), _size_as_7bit(PATCH_SIZE))
 
 
@@ -290,10 +327,16 @@ def isPartOfSingleProgramDump(message: List[int]) -> bool:
         return False
     if command != COMMAND_DT1:
         return False
-    return (
-        (_patch_no_from_address(address) is not None and len(data) == PATCH_SIZE) or
-        (_tone_no_from_address(address) is not None and len(data) == TONE_SIZE)
-    )
+    if _patch_no_from_address(address) is not None and len(data) == PATCH_SIZE:
+        return True
+    # Accept any DT1 whose address falls within a tone slot (chunked or full)
+    tone_base_flat = _addr_to_int(TONE_MEMORY_BASE)
+    delta = _addr_to_int(address) - tone_base_flat
+    if 0 <= delta < TONE_COUNT * TONE_STRIDE:
+        offset_in_slot = delta % TONE_STRIDE
+        if offset_in_slot + len(data) <= TONE_SIZE:
+            return True
+    return False
 
 
 def isSingleProgramDump(messages: List[int]) -> bool:
