@@ -234,7 +234,7 @@ def friendlyProgramName(program: int) -> str:
 
 
 def generalMessageDelay() -> int:
-    return 100
+    return 150
 
 
 def isOwnSysex(message: List[int]) -> bool:
