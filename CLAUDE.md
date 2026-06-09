@@ -97,9 +97,11 @@ Roland Exclusive Format Type IV: `F0 41 <dev_id> 16 <cmd> <addr[3]> <data…> <c
 | `TONE_COUNT` | 64 | |
 | `TONE_MEMORY_BASE` | `[0x08, 0x00, 0x00]` | tone[n] at base + n×256 |
 | `generalMessageDelay` | 100 ms | inter-request pause |
-| `MAX_PAYLOAD` | 64 | bytes per RQ1 chunk in gr50_tool |
+| `MAX_PAYLOAD` / `TONE_MAX_PAYLOAD` | 64 | bytes per RQ1 chunk |
 
 > **Critical**: `TONE_STRIDE` must be **256**, not 246. The GR-50 places each user tone at a 256-byte boundary. Using 246 puts requests at invalid addresses and causes timeouts starting at `tones[1]`.
+
+> **Critical**: Never send a single 246-byte RQ1 for a tone. The GR-50 times out on large single requests. Both `gr50_tool.py` and `Roland_GR50.py` chunk tone reads into 64-byte pieces (4 RQ1s per tone, last chunk 54 bytes).
 
 ### gr50_tool.py Usage
 
