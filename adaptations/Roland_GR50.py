@@ -48,8 +48,8 @@ TONE_NAME_LENGTH   = 10     # ASCII bytes at offset 0 of the tone common block
 TONE_STRIDE        = 256    # slot size; only 246 bytes are tone data, 10 are padding
 TONE_TEMP_BASE     = [0x04, 0x00, 0x00]   # Tone Temporary (string 1, slot 1)
 TONE_MEMORY_BASE   = [0x08, 0x00, 0x00]   # User tone bank start
-TONE_MAX_PAYLOAD   = 123    # split tone into 2 chunks (123+123=246); halves SysEx transaction count
-                             # vs 64-byte chunks which triggered MOTU MIDI Express XT input reset at ~252 txns
+TONE_MAX_PAYLOAD   = TONE_SIZE  # single 246-byte request per tone; 64 requests × 2 ports = 128 transactions,
+                                # well under MOTU MIDI Express XT reset threshold (~252)
 
 SYSTEM_SETUP_ADDR  = [0x52, 0x00, 0x00]   # used for device detection
 SYSTEM_SETUP_SIZE  = 19

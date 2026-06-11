@@ -6,12 +6,14 @@
 #   Tests for the Roland GR-50 Guitar Synthesizer adaptation.
 #
 #   Coverage highlights:
-#     - TONE_STRIDE = 256, not 246  (the root cause of the original 39% import failure)
-#     - 2-chunk (123+123) protocol round-trips for all tone slots, especially tone 63
+#     - TONE_STRIDE = 256, not 246  (root cause of original 39% import failure)
+#     - Single-request (TONE_MAX_PAYLOAD = TONE_SIZE) keeps tone bank within MOTU
+#       transaction limit even when KnobKraft detects on both Port 7 and All Cables
 #     - Both banks: Internal Patches (0–63) and User Tones (64–127)
 #     - All major KnobKraft API functions: detect, edit buffer, program dump, rename, fingerprint
 #
 
+import math
 import pytest
 from Roland_GR50 import *
 import knobkraft.sysex as sysex
@@ -87,6 +89,11 @@ def _make_tone_chunks(tone_no, tone_name="TestTone  ", data=None, chunk_size=Non
     return msgs
 
 
+def _tone_buf(tone_no, **kwargs) -> list:
+    """Flat byte buffer for a complete tone dump (all chunks concatenated)."""
+    return sum(_make_tone_chunks(tone_no, **kwargs), [])
+
+
 # ---------------------------------------------------------------------------
 # Identity
 # ---------------------------------------------------------------------------
@@ -147,8 +154,11 @@ def test_patch_request_is_rq1():
     assert msg[4] == COMMAND_RQ1
 
 
-def test_tone_request_is_two_messages():
-    assert len(_split(createProgramDumpRequest(0, PATCH_COUNT))) == 2
+def test_tone_request_message_count():
+    """Number of RQ1s per tone is ceil(TONE_SIZE / TONE_MAX_PAYLOAD)."""
+    expected = math.ceil(TONE_SIZE / TONE_MAX_PAYLOAD)
+    req = createProgramDumpRequest(0, PATCH_COUNT)
+    assert len(_split(req)) == expected
 
 
 def test_tone_request_chunk_sizes_sum_to_tone_size():
@@ -176,19 +186,18 @@ def test_accepts_full_patch_dt1():
     assert isPartOfSingleProgramDump(_make_patch(0))
 
 
-def test_accepts_tone_chunk_offset_0():
+def test_accepts_tone_first_chunk():
     assert isPartOfSingleProgramDump(_make_tone_chunks(0)[0])
 
 
-def test_accepts_tone_chunk_offset_123():
-    assert isPartOfSingleProgramDump(_make_tone_chunks(0)[1])
+def test_accepts_tone_last_chunk():
+    assert isPartOfSingleProgramDump(_make_tone_chunks(0)[-1])
 
 
-def test_accepts_tone_63_both_chunks():
-    """Tone 63 uses a 0x7F address byte — must be recognised correctly."""
-    chunks = _make_tone_chunks(63)
-    assert isPartOfSingleProgramDump(chunks[0])
-    assert isPartOfSingleProgramDump(chunks[1])
+def test_accepts_all_tone_63_chunks():
+    """Tone 63 uses a 0x7E base address — must be recognised correctly."""
+    for chunk in _make_tone_chunks(63):
+        assert isPartOfSingleProgramDump(chunk)
 
 
 def test_rejects_rq1():
@@ -202,9 +211,9 @@ def test_rejects_wrong_manufacturer():
     assert not isPartOfSingleProgramDump(bad)
 
 
-@pytest.mark.parametrize("chunk_size", [64, 123])
+@pytest.mark.parametrize("chunk_size", [64, 123, TONE_SIZE])
 def test_accepts_various_chunk_sizes(chunk_size):
-    """Both the old 64-byte and the current 123-byte chunk sizes must be accepted."""
+    """64-byte, 123-byte, and full 246-byte chunks must all be accepted."""
     for chunk in _make_tone_chunks(0, chunk_size=chunk_size):
         assert isPartOfSingleProgramDump(chunk)
 
@@ -217,13 +226,16 @@ def test_patch_is_complete_on_its_own():
     assert isSingleProgramDump(_make_patch(5))
 
 
-def test_single_tone_chunk_is_incomplete():
-    assert not isSingleProgramDump(_make_tone_chunks(0)[0])
-
-
-def test_both_tone_chunks_are_complete():
+def test_incomplete_tone_buf_not_recognised():
+    """A partial tone buffer is not a complete dump."""
     chunks = _make_tone_chunks(0)
-    assert isSingleProgramDump(chunks[0] + chunks[1])
+    if len(chunks) == 1:
+        pytest.skip("TONE_MAX_PAYLOAD == TONE_SIZE: single chunk is always complete")
+    assert not isSingleProgramDump(chunks[0])
+
+
+def test_complete_tone_buf_recognised():
+    assert isSingleProgramDump(_tone_buf(0))
 
 
 def test_edit_buffer_is_not_single_program():
@@ -245,13 +257,11 @@ def test_number_from_patch(patch_no):
 
 @pytest.mark.parametrize("tone_no", [0, 1, 32, 63])
 def test_number_from_tone(tone_no):
-    chunks = _make_tone_chunks(tone_no)
-    assert numberFromDump(chunks[0] + chunks[1]) == PATCH_COUNT + tone_no
+    assert numberFromDump(_tone_buf(tone_no)) == PATCH_COUNT + tone_no
 
 
 def test_tone_63_program_number_is_127():
-    chunks = _make_tone_chunks(63)
-    assert numberFromDump(chunks[0] + chunks[1]) == 127
+    assert numberFromDump(_tone_buf(63)) == 127
 
 
 # ---------------------------------------------------------------------------
@@ -264,14 +274,12 @@ def test_name_from_patch():
 
 
 def test_name_from_tone():
-    chunks = _make_tone_chunks(0, tone_name="Lead      ")
-    assert nameFromDump(chunks[0] + chunks[1]) == "Lead"
+    assert nameFromDump(_tone_buf(0, tone_name="Lead      ")) == "Lead"
 
 
-def test_name_falls_in_first_chunk():
-    """Tone names are at offset 0, entirely within the first 123-byte chunk."""
-    chunks = _make_tone_chunks(0, tone_name="Bass      ")
-    assert nameFromDump(chunks[0] + chunks[1]) == "Bass"
+def test_name_in_first_chunk():
+    """Tone names live at offset 0, within the first chunk regardless of chunk size."""
+    assert nameFromDump(_tone_buf(0, tone_name="Bass      ")) == "Bass"
 
 
 # ---------------------------------------------------------------------------
@@ -287,8 +295,7 @@ def test_rename_patch():
 
 
 def test_rename_tone():
-    chunks = _make_tone_chunks(7, tone_name="OldName   ")
-    renamed = renamePatch(chunks[0] + chunks[1], "NewName   ")
+    renamed = renamePatch(_tone_buf(7, tone_name="OldName   "), "NewName   ")
     assert nameFromDump(renamed) == "NewName"
     assert isSingleProgramDump(renamed)
     assert numberFromDump(renamed) == PATCH_COUNT + 7
@@ -313,9 +320,9 @@ def test_fingerprint_differs_for_different_patch_data():
 
 def test_fingerprint_ignores_tone_name():
     body = [0x33] * TONE_SIZE
-    chunks_a = _make_tone_chunks(0, tone_name="Alpha     ", data=list(body))
-    chunks_b = _make_tone_chunks(0, tone_name="Zeta      ", data=list(body))
-    assert calculateFingerprint(chunks_a[0] + chunks_a[1]) == calculateFingerprint(chunks_b[0] + chunks_b[1])
+    fp_a = calculateFingerprint(_tone_buf(0, tone_name="Alpha     ", data=list(body)))
+    fp_b = calculateFingerprint(_tone_buf(0, tone_name="Zeta      ", data=list(body)))
+    assert fp_a == fp_b
 
 
 # ---------------------------------------------------------------------------
@@ -345,15 +352,13 @@ def test_convert_patch_from_edit_buffer():
 
 
 def test_convert_tone_to_edit_buffer():
-    chunks = _make_tone_chunks(3)
-    eb = convertToEditBuffer(0, chunks[0] + chunks[1])
+    eb = convertToEditBuffer(0, _tone_buf(3))
     assert isEditBufferDump(eb)
     assert not isSingleProgramDump(eb)
 
 
 def test_convert_tone_from_edit_buffer():
-    chunks = _make_tone_chunks(0, tone_name="EbTone    ")
-    eb = convertToEditBuffer(0, chunks[0] + chunks[1])
+    eb = convertToEditBuffer(0, _tone_buf(0, tone_name="EbTone    "))
     prog = convertToProgramDump(0, eb, PATCH_COUNT + 5)
     assert isSingleProgramDump(prog)
     assert numberFromDump(prog) == PATCH_COUNT + 5
@@ -386,8 +391,7 @@ def test_wrong_manufacturer_not_detected():
 @pytest.mark.parametrize("tone_no", [0, 1, 32, 62, 63])
 def test_tone_full_round_trip(tone_no):
     data = [(tone_no * 7 + i) % 128 for i in range(TONE_SIZE)]
-    chunks = _make_tone_chunks(tone_no, data=data)
-    buf = chunks[0] + chunks[1]
+    buf = _tone_buf(tone_no, data=data)
     assert isSingleProgramDump(buf)
     assert numberFromDump(buf) == PATCH_COUNT + tone_no
 
@@ -403,5 +407,63 @@ def test_patch_full_round_trip(patch_no):
 def test_bank_boundary_patch_63_vs_tone_0():
     """Program 63 is the last patch; program 64 is the first tone."""
     assert numberFromDump(_make_patch(63)) == 63
-    chunks = _make_tone_chunks(0)
-    assert numberFromDump(chunks[0] + chunks[1]) == PATCH_COUNT
+    assert numberFromDump(_tone_buf(0)) == PATCH_COUNT
+
+
+# ---------------------------------------------------------------------------
+# Hardware-constraint tests — model the conditions that cause real timeouts
+#
+# The MOTU MIDI Express XT resets its input port after ~252 inbound SysEx
+# transactions.  macOS can auto-detect the GR-50 on both the physical port
+# ("Port 7") AND the "All Cables" merged virtual port.  When that happens,
+# every DT1 response is delivered to KnobKraft twice, doubling the effective
+# transaction count seen by the MOTU hardware.
+# ---------------------------------------------------------------------------
+
+MOTU_RESET_THRESHOLD = 252
+
+
+def test_transaction_count_single_port():
+    """On a single MIDI port, all 64 User Tone requests must stay under the MOTU limit."""
+    total = sum(
+        len(_split(createProgramDumpRequest(0, PATCH_COUNT + t)))
+        for t in range(TONE_COUNT)
+    )
+    assert total < MOTU_RESET_THRESHOLD, (
+        f"Full tone bank needs {total} transactions (MOTU limit: {MOTU_RESET_THRESHOLD})"
+    )
+
+
+def test_transaction_count_dual_port():
+    """With All Cables double-detection, effective transactions = requests × 2.
+
+    Previously failed when TONE_MAX_PAYLOAD=123 (128 × 2 = 256 > 252).
+    With TONE_MAX_PAYLOAD=TONE_SIZE: 64 × 2 = 128, well under the limit.
+    """
+    total_requests = sum(
+        len(_split(createProgramDumpRequest(0, PATCH_COUNT + t)))
+        for t in range(TONE_COUNT)
+    )
+    effective = total_requests * 2
+    assert effective < MOTU_RESET_THRESHOLD, (
+        f"{total_requests} requests × 2 ports = {effective} effective transactions "
+        f"(MOTU limit: {MOTU_RESET_THRESHOLD})"
+    )
+
+
+def test_duplicate_dt1_chunks_reassemble():
+    """All Cables port delivers each DT1 to KnobKraft twice; verify reassembly still works."""
+    for tone_no in [0, 32, 63]:
+        chunks = _make_tone_chunks(tone_no)
+        doubled = sum(chunks + chunks, [])   # each chunk appears twice
+        assert isSingleProgramDump(doubled), f"tone {tone_no}: duplicates broke reassembly"
+        assert numberFromDump(doubled) == PATCH_COUNT + tone_no
+
+
+def test_full_bank_import_simulation():
+    """Simulate a sequential KnobKraft import of all 64 User Tones."""
+    for tone_no in range(TONE_COUNT):
+        data = [(tone_no + i) % 128 for i in range(TONE_SIZE)]
+        buf = _tone_buf(tone_no, data=data)
+        assert isSingleProgramDump(buf), f"tone {tone_no} not recognised"
+        assert numberFromDump(buf) == PATCH_COUNT + tone_no
