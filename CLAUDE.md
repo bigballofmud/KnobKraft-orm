@@ -43,7 +43,7 @@ Key API functions every adaptation needs:
 | `renamePatch(messages, new_name)` | Return dump with new name |
 | `calculateFingerprint(messages)` | Stable hash for dedup |
 
-`generalMessageDelay()` returns inter-request pause in ms (GR-50 uses 100).
+`generalMessageDelay()` returns inter-request pause in ms (GR-50 uses 150).
 
 Multi-bank adaptations: return multiple entries from `bankDescriptors()`. Programs in later banks are offset by the cumulative size of earlier banks (see `Roland_MKS70*.py` as a reference pattern).
 
@@ -96,12 +96,12 @@ Roland Exclusive Format Type IV: `F0 41 <dev_id> 16 <cmd> <addr[3]> <data…> <c
 | `TONE_STRIDE` | **256** | slot size; 246 data + 10 padding |
 | `TONE_COUNT` | 64 | |
 | `TONE_MEMORY_BASE` | `[0x08, 0x00, 0x00]` | tone[n] at base + n×256 |
-| `generalMessageDelay` | 100 ms | inter-request pause |
+| `generalMessageDelay` | 150 ms | inter-request pause |
 | `MAX_PAYLOAD` / `TONE_MAX_PAYLOAD` | 64 | bytes per RQ1 chunk |
 
 > **Critical**: `TONE_STRIDE` must be **256**, not 246. The GR-50 places each user tone at a 256-byte boundary. Using 246 puts requests at invalid addresses and causes timeouts starting at `tones[1]`.
 
-> **Critical**: Never send a single 246-byte RQ1 for a tone. The GR-50 times out on large single requests. Both `gr50_tool.py` and `Roland_GR50.py` chunk tone reads into 64-byte pieces (4 RQ1s per tone, last chunk 54 bytes).
+> **Critical**: The GR-50 only answers the **first** RQ1 in a burst of multiple simultaneous requests; all others are silently ignored. `Roland_GR50.py` works around this by sending only the first 64-byte chunk from `createProgramDumpRequest`, then using `isPartOfSingleProgramDump`'s `(True, next_rq1)` handshake return to drive each subsequent chunk only after the previous DT1 arrives — strictly sequential, matching `gr50_tool.py`'s receive-then-send loop. Never revert to sending all chunks at once.
 
 ### gr50_tool.py Usage
 

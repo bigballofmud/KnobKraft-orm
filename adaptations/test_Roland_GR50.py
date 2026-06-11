@@ -7,8 +7,9 @@
 #
 #   Coverage highlights:
 #     - TONE_STRIDE = 256, not 246  (root cause of original 39% import failure)
-#     - Single-request (TONE_MAX_PAYLOAD = TONE_SIZE) keeps tone bank within MOTU
-#       transaction limit even when KnobKraft detects on both Port 7 and All Cables
+#     - Handshake-driven sequential chunk download: createProgramDumpRequest sends
+#       only the first RQ1; isPartOfSingleProgramDump returns (True, next_rq1) to
+#       trigger each subsequent chunk only after the previous DT1 arrives
 #     - Both banks: Internal Patches (0–63) and User Tones (64–127)
 #     - All major KnobKraft API functions: detect, edit buffer, program dump, rename, fingerprint
 #
@@ -429,40 +430,28 @@ MOTU_RESET_THRESHOLD = 252
 
 
 def test_transaction_count_single_port():
-    """Transaction count for a single MIDI port.
+    """Initial RQ1 count for the full tone bank stays well under the MOTU reset threshold.
 
-    gr50_tool.py uses 4×64-byte chunks (256 transactions) on a single port and
-    completes successfully, so the MOTU reset threshold must be > 256 for a
-    single physical port.  This test FAILS with TONE_MAX_PAYLOAD=64 (256 > 252)
-    — that signals the adaptation is in a configuration that REQUIRES a single
-    physical port and will fail if KnobKraft detects a second port (All Cables).
+    createProgramDumpRequest sends only the first chunk per tone; subsequent
+    chunks are driven by the isPartOfSingleProgramDump handshake at runtime and
+    are not counted here.  64 initial transactions is far below the MOTU limit.
     """
     total = sum(
         len(_split(createProgramDumpRequest(0, PATCH_COUNT + t)))
         for t in range(TONE_COUNT)
     )
     assert total < MOTU_RESET_THRESHOLD, (
-        f"Full tone bank needs {total} transactions.  "
-        f"gr50_tool.py confirms single-port works at 256; "
-        f"KnobKraft fails when All Cables doubles this to {total * 2}."
+        f"Full tone bank needs {total} initial transactions "
+        f"(MOTU limit: {MOTU_RESET_THRESHOLD})"
     )
 
 
 def test_transaction_count_dual_port():
-    """With All Cables double-detection, effective transactions = requests × 2.
+    """Even if All Cables double-detection were still active, initial count stays safe.
 
-    KnobKraft auto-detects the GR-50 on both the physical MIDI port ("Port 7")
-    AND the macOS "All Cables" merged virtual port.  It sends requests to BOTH,
-    doubling the actual RQ1 traffic and the GR-50 DT1 responses seen by the MOTU.
-    This is the root cause of the 98% import failure with 4×64-byte chunks.
-
-    No chunk size can satisfy both constraints simultaneously:
-      - TONE_MAX_PAYLOAD=64 : GR-50 reliable, but 256×2=512 >> MOTU limit
-      - TONE_MAX_PAYLOAD=246: 64×2=128 transactions, but GR-50 times out at ~tone 24
-
-    Fix requires eliminating the dual detection — either by hiding the "All Cables"
-    port in macOS Audio MIDI Setup, or by using a MIDI interface without it
-    (e.g. Roland UM-ONE MK2).
+    FindSynthOnMidiNetwork.cpp now skips output-only ports so dual detection no
+    longer occurs in practice.  This test confirms the handshake approach keeps
+    the initial RQ1 count low enough that doubling it would still be safe.
     """
     total_requests = sum(
         len(_split(createProgramDumpRequest(0, PATCH_COUNT + t)))
@@ -476,7 +465,7 @@ def test_transaction_count_dual_port():
 
 
 def test_duplicate_dt1_chunks_reassemble():
-    """All Cables port delivers each DT1 to KnobKraft twice; verify reassembly still works."""
+    """Duplicate DT1 chunks must not corrupt reassembly."""
     for tone_no in [0, 32, 63]:
         chunks = _make_tone_chunks(tone_no)
         doubled = sum(chunks + chunks, [])   # each chunk appears twice
