@@ -48,7 +48,13 @@ TONE_NAME_LENGTH   = 10     # ASCII bytes at offset 0 of the tone common block
 TONE_STRIDE        = 256    # slot size; only 246 bytes are tone data, 10 are padding
 TONE_TEMP_BASE     = [0x04, 0x00, 0x00]   # Tone Temporary (string 1, slot 1)
 TONE_MEMORY_BASE   = [0x08, 0x00, 0x00]   # User tone bank start
-TONE_MAX_PAYLOAD   = 64         # GR-50 reliable limit; single 246-byte requests time out at ~tone 24
+TONE_MAX_PAYLOAD   = 64         # GR-50 max reliable chunk size for RQ1.
+                                # The GR-50 only answers the *first* RQ1 in a burst of multiple
+                                # requests; all subsequent requests in the same sendBlock are silently
+                                # ignored.  We work around this by sending only the first chunk in
+                                # createProgramDumpRequest and using isPartOfSingleProgramDump's
+                                # (bool, handshake_bytes) tuple return to trigger each next chunk
+                                # sequentially, exactly as gr50_tool.py's recv-then-send loop does.
 
 SYSTEM_SETUP_ADDR  = [0x52, 0x00, 0x00]   # used for device detection
 SYSTEM_SETUP_SIZE  = 19
@@ -306,19 +312,17 @@ def createProgramDumpRequest(channel: int, patchNo: int) -> List[int]:
     if patchNo >= PATCH_COUNT:
         tone_no = (patchNo - PATCH_COUNT) % TONE_COUNT
         base_flat = _addr_to_int(_tone_address(tone_no))
-        result: List[int] = []
-        offset = 0
-        while offset < TONE_SIZE:
-            chunk = min(TONE_MAX_PAYLOAD, TONE_SIZE - offset)
-            result += _build_message(_device_id, COMMAND_RQ1,
-                                     _int_to_addr(base_flat + offset),
-                                     _size_as_7bit(chunk))
-            offset += chunk
-        return result
+        # Send only the first chunk.  isPartOfSingleProgramDump returns a
+        # (True, next_rq1) handshake tuple for every non-final chunk so the
+        # C++ layer drives each subsequent request after the previous DT1
+        # arrives, matching the strict sequential pattern gr50_tool.py uses.
+        return _build_message(_device_id, COMMAND_RQ1,
+                              _int_to_addr(base_flat),
+                              _size_as_7bit(TONE_MAX_PAYLOAD))
     return _build_message(_device_id, COMMAND_RQ1, _patch_address(patchNo), _size_as_7bit(PATCH_SIZE))
 
 
-def isPartOfSingleProgramDump(message: List[int]) -> bool:
+def isPartOfSingleProgramDump(message: List[int]):
     if not isOwnSysex(message):
         return False
     try:
@@ -331,11 +335,25 @@ def isPartOfSingleProgramDump(message: List[int]) -> bool:
         return True
     # Accept any DT1 whose address falls within a tone slot (chunked or full)
     tone_base_flat = _addr_to_int(TONE_MEMORY_BASE)
-    delta = _addr_to_int(address) - tone_base_flat
+    addr_flat = _addr_to_int(address)
+    delta = addr_flat - tone_base_flat
     if 0 <= delta < TONE_COUNT * TONE_STRIDE:
+        slot = delta // TONE_STRIDE
         offset_in_slot = delta % TONE_STRIDE
         if offset_in_slot + len(data) <= TONE_SIZE:
-            return True
+            next_offset = offset_in_slot + len(data)
+            if next_offset < TONE_SIZE:
+                # More data needed: return (True, next_RQ1) so the C++ layer
+                # sends the next request only after this DT1 has arrived,
+                # keeping requests strictly sequential (like gr50_tool.py).
+                slot_base = tone_base_flat + slot * TONE_STRIDE
+                next_size = min(TONE_MAX_PAYLOAD, TONE_SIZE - next_offset)
+                next_rq1 = _build_message(_device_id, COMMAND_RQ1,
+                                          _int_to_addr(slot_base + next_offset),
+                                          _size_as_7bit(next_size))
+                return True, next_rq1
+            else:
+                return True
     return False
 
 

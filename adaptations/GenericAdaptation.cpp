@@ -578,44 +578,50 @@ namespace knobkraft {
 
 	void GenericAdaptation::sendBlockOfMessagesToSynth(juce::MidiDeviceInfo const& midiOutput, std::vector<MidiMessage> const& buffer)
 	{
-		py::gil_scoped_acquire acquire;
 		int delay = 0;
 		bool handled = false;
-		if (pythonModuleHasFunction(kMessageTimings)) {
-			try {
-				py::object result = callMethod(kMessageTimings);
-				if (py::isinstance<py::dict>(result)) {
-					auto dict = result.cast<py::dict>();
-					auto key = py::str("generalMessageDelay");
-					if (dict.contains(key)) {
-						delay = dict[key].cast<int>();
-						handled = true;
+		{
+			py::gil_scoped_acquire acquire;
+			if (pythonModuleHasFunction(kMessageTimings)) {
+				try {
+					py::object result = callMethod(kMessageTimings);
+					if (py::isinstance<py::dict>(result)) {
+						auto dict = result.cast<py::dict>();
+						auto key = py::str("generalMessageDelay");
+						if (dict.contains(key)) {
+							delay = dict[key].cast<int>();
+							handled = true;
+						}
 					}
 				}
+				catch (py::error_already_set& ex) {
+					logAdaptationError(kMessageTimings, ex);
+					ex.restore();
+				}
+				catch (std::exception& ex) {
+					logAdaptationError(kMessageTimings, ex);
+				}
 			}
-			catch (py::error_already_set& ex) {
-				logAdaptationError(kMessageTimings, ex);
-				ex.restore();
-			}
-			catch (std::exception& ex) {
-				logAdaptationError(kMessageTimings, ex);
-			}
-		}
 
-		if (!handled && pythonModuleHasFunction(kGeneralMessageDelay)) {
-			try {
-				auto result = callMethod(kGeneralMessageDelay);
-				delay = py::cast<int>(result);
-				handled = true;
-			}
-			catch (py::error_already_set& ex) {
-				logAdaptationError(kGeneralMessageDelay, ex);
-				ex.restore();
-			}
-			catch (std::exception& ex) {
-				logAdaptationError(kGeneralMessageDelay, ex);
+			if (!handled && pythonModuleHasFunction(kGeneralMessageDelay)) {
+				try {
+					auto result = callMethod(kGeneralMessageDelay);
+					delay = py::cast<int>(result);
+					handled = true;
+				}
+				catch (py::error_already_set& ex) {
+					logAdaptationError(kGeneralMessageDelay, ex);
+					ex.restore();
+				}
+				catch (std::exception& ex) {
+					logAdaptationError(kGeneralMessageDelay, ex);
+				}
 			}
 		}
+		// GIL released before the potentially long blocking send so that
+		// Python callbacks on other threads (e.g. isPartOfSingleProgramDump
+		// on the MIDI input thread for response chunks arriving mid-delay)
+		// are not starved for the full inter-message sleep duration.
 
 		if (handled && delay > 0) {
 			midikraft::MidiController::instance()->getMidiOutput(midiOutput)->sendBlockOfMessagesThrottled(buffer, delay);

@@ -155,17 +155,22 @@ def test_patch_request_is_rq1():
 
 
 def test_tone_request_message_count():
-    """Number of RQ1s per tone is ceil(TONE_SIZE / TONE_MAX_PAYLOAD)."""
-    expected = math.ceil(TONE_SIZE / TONE_MAX_PAYLOAD)
+    """createProgramDumpRequest sends only the first RQ1.
+
+    Subsequent chunks are driven via isPartOfSingleProgramDump handshake
+    tuples so each RQ1 is sent only after the previous DT1 arrives, matching
+    the strict sequential request-response pattern gr50_tool.py uses.
+    """
     req = createProgramDumpRequest(0, PATCH_COUNT)
-    assert len(_split(req)) == expected
+    assert len(_split(req)) == 1
 
 
-def test_tone_request_chunk_sizes_sum_to_tone_size():
-    """Total bytes requested across all chunks must equal TONE_SIZE."""
+def test_tone_request_first_chunk_size():
+    """First RQ1 requests exactly TONE_MAX_PAYLOAD bytes."""
     req = createProgramDumpRequest(0, PATCH_COUNT)
-    total = sum(_a2i(list(m[8:11])) for m in _split(req))
-    assert total == TONE_SIZE
+    first_msg = _split(req)[0]
+    requested = _a2i(list(first_msg[8:11]))
+    assert requested == TONE_MAX_PAYLOAD
 
 
 @pytest.mark.parametrize("patchNo, expected_addr", [
