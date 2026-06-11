@@ -424,21 +424,40 @@ MOTU_RESET_THRESHOLD = 252
 
 
 def test_transaction_count_single_port():
-    """On a single MIDI port, all 64 User Tone requests must stay under the MOTU limit."""
+    """Transaction count for a single MIDI port.
+
+    gr50_tool.py uses 4×64-byte chunks (256 transactions) on a single port and
+    completes successfully, so the MOTU reset threshold must be > 256 for a
+    single physical port.  This test FAILS with TONE_MAX_PAYLOAD=64 (256 > 252)
+    — that signals the adaptation is in a configuration that REQUIRES a single
+    physical port and will fail if KnobKraft detects a second port (All Cables).
+    """
     total = sum(
         len(_split(createProgramDumpRequest(0, PATCH_COUNT + t)))
         for t in range(TONE_COUNT)
     )
     assert total < MOTU_RESET_THRESHOLD, (
-        f"Full tone bank needs {total} transactions (MOTU limit: {MOTU_RESET_THRESHOLD})"
+        f"Full tone bank needs {total} transactions.  "
+        f"gr50_tool.py confirms single-port works at 256; "
+        f"KnobKraft fails when All Cables doubles this to {total * 2}."
     )
 
 
 def test_transaction_count_dual_port():
     """With All Cables double-detection, effective transactions = requests × 2.
 
-    Previously failed when TONE_MAX_PAYLOAD=123 (128 × 2 = 256 > 252).
-    With TONE_MAX_PAYLOAD=TONE_SIZE: 64 × 2 = 128, well under the limit.
+    KnobKraft auto-detects the GR-50 on both the physical MIDI port ("Port 7")
+    AND the macOS "All Cables" merged virtual port.  It sends requests to BOTH,
+    doubling the actual RQ1 traffic and the GR-50 DT1 responses seen by the MOTU.
+    This is the root cause of the 98% import failure with 4×64-byte chunks.
+
+    No chunk size can satisfy both constraints simultaneously:
+      - TONE_MAX_PAYLOAD=64 : GR-50 reliable, but 256×2=512 >> MOTU limit
+      - TONE_MAX_PAYLOAD=246: 64×2=128 transactions, but GR-50 times out at ~tone 24
+
+    Fix requires eliminating the dual detection — either by hiding the "All Cables"
+    port in macOS Audio MIDI Setup, or by using a MIDI interface without it
+    (e.g. Roland UM-ONE MK2).
     """
     total_requests = sum(
         len(_split(createProgramDumpRequest(0, PATCH_COUNT + t)))
