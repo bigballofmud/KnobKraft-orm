@@ -198,8 +198,11 @@ def _extract_tone_data(messages: List[int]) -> Tuple[Optional[int], List[int]]:
         if 0 <= delta < TONE_COUNT * TONE_STRIDE:
             slot = delta // TONE_STRIDE
             offset = delta % TONE_STRIDE
-            if offset + len(data) <= TONE_SIZE:
-                slots.setdefault(slot, {})[offset] = data
+            # Accept both RQ1-driven chunks (≤64 bytes) and bulk-dump DT1s
+            # (256 bytes = full TONE_STRIDE slot).  Clip padding so stored
+            # data never exceeds TONE_SIZE regardless of message length.
+            if offset < TONE_SIZE and offset + len(data) <= TONE_STRIDE:
+                slots.setdefault(slot, {})[offset] = data[:TONE_SIZE - offset]
 
     for slot, chunk_map in slots.items():
         assembled: List[int] = []
@@ -340,8 +343,12 @@ def isPartOfSingleProgramDump(message: List[int]):
     if 0 <= delta < TONE_COUNT * TONE_STRIDE:
         slot = delta // TONE_STRIDE
         offset_in_slot = delta % TONE_STRIDE
-        if offset_in_slot + len(data) <= TONE_SIZE:
-            next_offset = offset_in_slot + len(data)
+        # Accept RQ1-driven chunks (≤TONE_MAX_PAYLOAD) and bulk-dump DT1s
+        # (TONE_STRIDE bytes).  Clip to TONE_SIZE for the "bytes remaining"
+        # calculation so a 256-byte bulk message is treated as complete.
+        if offset_in_slot < TONE_SIZE and offset_in_slot + len(data) <= TONE_STRIDE:
+            stored_len = min(len(data), TONE_SIZE - offset_in_slot)
+            next_offset = offset_in_slot + stored_len
             if next_offset < TONE_SIZE:
                 # More data needed: return (True, next_RQ1) so the C++ layer
                 # sends the next request only after this DT1 has arrived,

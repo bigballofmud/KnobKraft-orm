@@ -90,6 +90,16 @@ def _make_tone_chunks(tone_no, tone_name="TestTone  ", data=None, chunk_size=Non
     return msgs
 
 
+def _make_tone_bulk(tone_no, tone_name="TestTone  ", data=None):
+    """Single 256-byte DT1 as produced by a GR-50 self-initiated bulk dump."""
+    body = list(data) if data is not None else [0] * TONE_SIZE
+    body[:TONE_NAME_LENGTH] = list(
+        tone_name[:TONE_NAME_LENGTH].ljust(TONE_NAME_LENGTH).encode("ascii")
+    )
+    padded = body + [0] * (TONE_STRIDE - TONE_SIZE)   # 246 data + 10 pad bytes
+    return _dt1(_tone_addr(tone_no), padded)
+
+
 def _tone_buf(tone_no, **kwargs) -> list:
     """Flat byte buffer for a complete tone dump (all chunks concatenated)."""
     return sum(_make_tone_chunks(tone_no, **kwargs), [])
@@ -250,6 +260,43 @@ def test_edit_buffer_is_not_single_program():
 
 def test_empty_is_not_single_program():
     assert not isSingleProgramDump([])
+
+
+# ---------------------------------------------------------------------------
+# Bulk-dump format (256-byte DT1 per tone, as produced by the GR-50 itself)
+# ---------------------------------------------------------------------------
+
+def test_bulk_tone_is_part_of_program_dump():
+    """A 256-byte (TONE_STRIDE) DT1 must be recognised as part of a program dump."""
+    bulk = _make_tone_bulk(0)
+    result = isPartOfSingleProgramDump(bulk)
+    # Must be truthy; must NOT be a tuple requesting a follow-up RQ1
+    assert result is True
+
+
+def test_bulk_tone_is_complete():
+    """A single 256-byte DT1 is a complete tone dump on its own."""
+    assert isSingleProgramDump(_make_tone_bulk(7))
+
+
+def test_bulk_tone_data_is_246_bytes():
+    """Extracted tone data must be TONE_SIZE (246) bytes — padding stripped."""
+    from Roland_GR50 import nameFromDump
+    tone_name = "BulkTone  "
+    bulk = _make_tone_bulk(3, tone_name=tone_name)
+    assert nameFromDump(bulk) == tone_name.rstrip()
+
+
+@pytest.mark.parametrize("tone_no", [0, 1, 31, 32, 63])
+def test_bulk_tone_program_number(tone_no):
+    """numberFromDump must return PATCH_COUNT + tone_no for bulk-format tones."""
+    assert numberFromDump(_make_tone_bulk(tone_no)) == PATCH_COUNT + tone_no
+
+
+def test_all_64_bulk_tones_recognised():
+    """All 64 bulk-format tone messages must each be complete, standalone dumps."""
+    for tone_no in range(TONE_COUNT):
+        assert isSingleProgramDump(_make_tone_bulk(tone_no)), f"tone {tone_no} not recognised"
 
 
 # ---------------------------------------------------------------------------
