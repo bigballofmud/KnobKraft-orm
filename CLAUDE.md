@@ -43,7 +43,7 @@ Key API functions every adaptation needs:
 | `renamePatch(messages, new_name)` | Return dump with new name |
 | `calculateFingerprint(messages)` | Stable hash for dedup |
 
-`generalMessageDelay()` returns inter-request pause in ms (GR-50 uses 150).
+`generalMessageDelay()` returns inter-request pause in ms (GR-50 uses 100; it ignores requests sent sooner than about 75 ms after its last reply).
 
 Multi-bank adaptations: return multiple entries from `bankDescriptors()`. Programs in later banks are offset by the cumulative size of earlier banks (see `Roland_MKS70*.py` as a reference pattern).
 
@@ -96,7 +96,7 @@ Roland Exclusive Format Type IV: `F0 41 <dev_id> 16 <cmd> <addr[3]> <data…> <c
 | `TONE_STRIDE` | **256** | slot size; 246 data + 10 padding |
 | `TONE_COUNT` | 64 | |
 | `TONE_MEMORY_BASE` | `[0x08, 0x00, 0x00]` | tone[n] at base + n×256 |
-| `generalMessageDelay` | 150 ms | inter-request pause |
+| `generalMessageDelay` | 100 ms | applied before every request; 50 ms or less stalls |
 | `MAX_PAYLOAD` / `TONE_MAX_PAYLOAD` | 64 | bytes per RQ1 chunk |
 
 > **Critical**: `TONE_STRIDE` must be **256**, not 246. The GR-50 places each user tone at a 256-byte boundary. Using 246 puts requests at invalid addresses and causes timeouts starting at `tones[1]`.

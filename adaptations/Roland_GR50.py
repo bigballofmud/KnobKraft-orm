@@ -243,7 +243,11 @@ def friendlyProgramName(program: int) -> str:
 
 
 def generalMessageDelay() -> int:
-    return 150
+    # KnobKraft sleeps this long before sending every message, including each handshake RQ1.
+    # The GR-50 ignores an RQ1 that arrives too soon after it finished sending a DT1:
+    # measured on hardware (2026-11-25), 0 ms and 50 ms both stall on the second chunk,
+    # 75 ms and 100 ms complete all 64 tones.  100 ms keeps a margin over that threshold.
+    return 100
 
 
 def isOwnSysex(message: List[int]) -> bool:

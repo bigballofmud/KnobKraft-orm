@@ -121,7 +121,8 @@ def test_bank_descriptors():
 
 
 def test_general_message_delay():
-    assert generalMessageDelay() == 150
+    # The GR-50 drops requests sent sooner than ~75 ms after its reply; keep a margin
+    assert generalMessageDelay() >= 75
 
 
 # ---------------------------------------------------------------------------
