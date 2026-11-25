@@ -198,7 +198,23 @@ MainComponent::MainComponent(bool makeYourOwnSize) :
 		}
 	}
 	else {
-		database_ = std::make_unique<midikraft::PatchDatabase>(false);
+		// No database remembered yet. Open the existing default database rather than creating a new,
+		// empty numbered sibling on every launch, and remember it so later launches reopen it.
+		auto defaultLocation = midikraft::PatchDatabase::generateDefaultDatabaseLocation();
+		try {
+			if (File(defaultLocation).existsAsFile()) {
+				database_ = std::make_unique<midikraft::PatchDatabase>(defaultLocation, midikraft::PatchDatabase::OpenMode::READ_WRITE);
+			}
+			else {
+				database_ = std::make_unique<midikraft::PatchDatabase>(true);
+			}
+		}
+		catch (midikraft::PatchDatabaseException& e) {
+			// Default database can't be opened (e.g. from an incompatible version): fall back to a fresh one beside it
+			spdlog::error("Could not open default database {}, creating a new empty database instead. Error was '{}'", defaultLocation, e.what());
+			database_ = std::make_unique<midikraft::PatchDatabase>(false);
+		}
+		Settings::instance().set("LastDatabase", database_->getCurrentDatabaseFileName());
 	}
 	recentFiles_.setMaxNumberOfItems(10);
 	if (Settings::instance().keyIsSet("RecentFiles")) {
