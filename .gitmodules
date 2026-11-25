@@ -4,8 +4,8 @@
 	ignore = dirty
 [submodule "juce-widgets"]
 	path = juce-widgets
-	url = https://github.com/christofmuc/juce-widgets.git
-	branch = master
+	url = https://github.com/bigballofmud/juce-widgets.git
+	branch = midilog-timestamp-fix
 [submodule "juce-utils"]
 	path = juce-utils
 	url = https://github.com/christofmuc/juce-utils.git
