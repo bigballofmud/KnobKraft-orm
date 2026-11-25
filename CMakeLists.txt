@@ -273,7 +273,11 @@ set(JUCE_DIR "${CMAKE_CURRENT_LIST_DIR}/third_party/JUCE" CACHE PATH "Path to th
 if(NOT EXISTS "${JUCE_DIR}/CMakeLists.txt")
 	message(FATAL_ERROR "JUCE_DIR '${JUCE_DIR}' does not contain a JUCE source tree")
 endif()
-message(STATUS "Using JUCE from ${JUCE_DIR}")
+# Read the JUCE version from its project() line, so the build can tell which major version it uses
+file(STRINGS "${JUCE_DIR}/CMakeLists.txt" _juce_project_line REGEX "project\\(JUCE VERSION")
+string(REGEX MATCH "VERSION ([0-9]+)\\.([0-9]+)\\.([0-9]+)" _juce_version_match "${_juce_project_line}")
+set(JUCE_VERSION_MAJOR "${CMAKE_MATCH_1}")
+message(STATUS "Using JUCE ${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3} from ${JUCE_DIR}")
 if(IS_ABSOLUTE "${JUCE_DIR}" AND NOT "${JUCE_DIR}" MATCHES "^${CMAKE_CURRENT_LIST_DIR}/")
 	# A source directory outside this tree needs an explicit binary directory
 	add_subdirectory("${JUCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/JUCE" EXCLUDE_FROM_ALL)

@@ -107,7 +107,13 @@ set(SOURCES
 
 # Mac Icon Magic
 if(APPLE)
-set(KnobKraftOrm_ICON ${CMAKE_CURRENT_SOURCE_DIR}/resources/icon_orm.icns)
+# Builds against JUCE 9 or later get a badged icon so they can be told apart from JUCE 8 builds
+if(JUCE_VERSION_MAJOR GREATER_EQUAL 9)
+	set(KnobKraftOrm_ICON_NAME icon_orm_juce9.icns)
+else()
+	set(KnobKraftOrm_ICON_NAME icon_orm.icns)
+endif()
+set(KnobKraftOrm_ICON ${CMAKE_CURRENT_SOURCE_DIR}/resources/${KnobKraftOrm_ICON_NAME})
 set_source_files_properties(${KnobKraftOrm_ICON} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
 
 ENDIF()
@@ -184,7 +190,7 @@ ELSEIF(APPLE)
 		pybind11::embed
 		)
 	SET_TARGET_PROPERTIES(KnobKraftOrm PROPERTIES MACOSX_BUNDLE_BUNDLE_NAME "KnobKraft Orm ${KnobKraftOrm_VERSION}"
-			MACOSX_BUNDLE_ICON_FILE icon_orm.icns
+			MACOSX_BUNDLE_ICON_FILE ${KnobKraftOrm_ICON_NAME}
 			MACOSX_BUNDLE_BUNDLE_VERSION ${KnobKraftOrm_VERSION}
 			MACOSX_BUNDLE_GUI_IDENTIFIER "com.knobkraft.orm"
 			MACOSX_BUNDLE_IDENTIFIER "com.knobkraft.orm"
