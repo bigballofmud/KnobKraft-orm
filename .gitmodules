@@ -44,7 +44,8 @@
 	url = https://github.com/fmtlib/fmt.git
 [submodule "MidiKraft"]
 	path = MidiKraft
-	url = https://github.com/christofmuc/MidiKraft.git
+	url = https://github.com/bigballofmud/MidiKraft.git
+	branch = gr50-motu-fix
 [submodule "third_party/spdlog"]
 	path = third_party/spdlog
 	url = https://github.com/gabime/spdlog.git
