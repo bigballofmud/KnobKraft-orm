@@ -149,9 +149,16 @@ if (SPARKLE_UPDATES AND WIN32)
 endif()
 target_include_directories(KnobKraftOrm SYSTEM
 	PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
-target_compile_definitions(KnobKraftOrm PRIVATE JUCE_MODULE_AVAILABLE_gin_gui JUCE_MODULE_AVAILABLE_gin)
-get_target_property(gin_include_dirs gin INTERFACE_INCLUDE_DIRECTORIES)
-target_include_directories(KnobKraftOrm SYSTEM PRIVATE ${gin_include_dirs})
+# Gin is only used for its colour property component. JUCE 9 builds use juce-widgets' own
+# ColourPropertyComponent instead and leave Gin out entirely; JUCE 8 builds keep Gin as upstream does.
+if(KNOBKRAFT_USE_GIN)
+	target_compile_definitions(KnobKraftOrm PRIVATE KNOBKRAFT_USE_GIN JUCE_MODULE_AVAILABLE_gin_gui JUCE_MODULE_AVAILABLE_gin)
+	get_target_property(gin_include_dirs gin INTERFACE_INCLUDE_DIRECTORIES)
+	target_include_directories(KnobKraftOrm SYSTEM PRIVATE ${gin_include_dirs})
+	set(KNOBKRAFT_GIN_LIB gin)
+else()
+	set(KNOBKRAFT_GIN_LIB "")
+endif()
 IF(WIN32)	
 	IF(CRASH_REPORTING)
 		IF(SENTRY_LOGGING)
@@ -173,7 +180,7 @@ IF(WIN32)
 		icuuc
 		SQLiteCpp
 		sqlite3
-		gin
+		${KNOBKRAFT_GIN_LIB}
 		spdlog::spdlog
 		${SENTRY_LIB}
 		${SPARKLE_DEPENDENCY}
@@ -185,7 +192,7 @@ ELSEIF(APPLE)
 		${MIDIKRAFT_LIBRARIES}
 		SQLiteCpp
 		sqlite3
-		gin
+		${KNOBKRAFT_GIN_LIB}
 		spdlog::spdlog
 		pybind11::embed
 		)
@@ -203,7 +210,7 @@ ELSEIF(UNIX)
 		${MIDIKRAFT_LIBRARIES}
 		SQLiteCpp
 		sqlite3
-		gin
+		${KNOBKRAFT_GIN_LIB}
 		spdlog::spdlog
 		)
         target_include_directories(KnobKraftOrm PRIVATE

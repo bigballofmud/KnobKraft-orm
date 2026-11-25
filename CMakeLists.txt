@@ -285,8 +285,15 @@ else()
 	add_subdirectory("${JUCE_DIR}" EXCLUDE_FROM_ALL)
 endif()
 
-# Adding more third party modules
-add_subdirectory("third_party/")
+# Adding more third party modules. third_party/CMakeLists.txt only builds Gin, which JUCE 9 builds don't
+# need: they use juce-widgets' own ColourPropertyComponent instead.
+if(JUCE_VERSION_MAJOR LESS 9)
+	set(KNOBKRAFT_USE_GIN ON)
+	add_subdirectory("third_party/")
+else()
+	set(KNOBKRAFT_USE_GIN OFF)
+endif()
+message(STATUS "Using Gin: ${KNOBKRAFT_USE_GIN}")
 
 # Build a static library from juce 
 add_library(juce-static STATIC)

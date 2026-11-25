@@ -7,7 +7,13 @@
 #include "EditCategoryDialog.h"
 
 #include "PropertyEditor.h"
+#ifdef KNOBKRAFT_USE_GIN
 #include "gin_gui/gin_gui.h"
+using CategoryColourComponent = gin::ColourPropertyComponent;
+#else
+#include "ColourPropertyComponent.h"
+using CategoryColourComponent = ColourPropertyComponent;
+#endif
 
 #include "LayoutConstants.h"
 
@@ -46,7 +52,7 @@ private:
 	ToggleButton active;
 	TextEditor name;
 	TextEditor order_num;
-	gin::ColourPropertyComponent color;
+	CategoryColourComponent color;
 };
 
 class TitleRow: public Component {
