@@ -29,7 +29,8 @@
 	ignore = dirty
 [submodule "third_party/Gin"]
 	path = third_party/Gin
-	url = https://github.com/FigBug/Gin.git
+	url = https://github.com/bigballofmud/Gin.git
+	branch = knobkraft-juce9
 [submodule "third_party/json"]
 	path = third_party/json
 	url = https://github.com/nlohmann/json.git

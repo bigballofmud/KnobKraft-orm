@@ -236,7 +236,9 @@ if (MSVC)
 else()    
 	if(APPLE)
 		# lots of warnings and all warnings as errors    
-		target_compile_options(KnobKraftOrm PRIVATE -Wall -Wextra -pedantic -Werror -Wno-unknown-pragmas -Wno-missing-field-initializers)
+		# Deprecations stay visible as warnings but don't fail the build: JUCE 9 deprecates the
+		# synchronous AlertWindow boxes (showOkCancelBox etc.) still used throughout the UI.
+		target_compile_options(KnobKraftOrm PRIVATE -Wall -Wextra -pedantic -Werror -Wno-error=deprecated-declarations -Wno-unknown-pragmas -Wno-missing-field-initializers)
 	else()
 		# only lots of warnings now
 		target_compile_options(KnobKraftOrm PRIVATE -Wall -Wextra -pedantic -Wno-unknown-pragmas -Wno-missing-field-initializers)

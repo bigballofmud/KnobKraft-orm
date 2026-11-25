@@ -267,8 +267,19 @@ ENDIF()
 # CPack installer on macOS.
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/third_party/SQLiteCpp EXCLUDE_FROM_ALL)
 
-# Adding JUCE
-add_subdirectory("third_party/JUCE" EXCLUDE_FROM_ALL)
+# Adding JUCE. Defaults to the pinned submodule; pass -DJUCE_DIR=/path/to/JUCE to build
+# against a separate JUCE checkout instead (e.g. a newer version shared between projects).
+set(JUCE_DIR "${CMAKE_CURRENT_LIST_DIR}/third_party/JUCE" CACHE PATH "Path to the JUCE source tree")
+if(NOT EXISTS "${JUCE_DIR}/CMakeLists.txt")
+	message(FATAL_ERROR "JUCE_DIR '${JUCE_DIR}' does not contain a JUCE source tree")
+endif()
+message(STATUS "Using JUCE from ${JUCE_DIR}")
+if(IS_ABSOLUTE "${JUCE_DIR}" AND NOT "${JUCE_DIR}" MATCHES "^${CMAKE_CURRENT_LIST_DIR}/")
+	# A source directory outside this tree needs an explicit binary directory
+	add_subdirectory("${JUCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/JUCE" EXCLUDE_FROM_ALL)
+else()
+	add_subdirectory("${JUCE_DIR}" EXCLUDE_FROM_ALL)
+endif()
 
 # Adding more third party modules
 add_subdirectory("third_party/")

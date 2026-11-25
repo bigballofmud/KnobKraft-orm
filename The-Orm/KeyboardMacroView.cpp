@@ -40,7 +40,13 @@ public:
 
 	void show(std::function<void(std::set<int> const&, bool)> done) {
 		done_ = std::move(done);
-		auto options = juce::MessageBoxOptions().withButton("Clear").withButton("Cancel").withTitle("Press key(s) on your MIDI keyboard").withParentComponent(parent_);
+#if JUCE_MAJOR_VERSION >= 9
+		// JUCE 9 requires explicit result codes; these match JUCE 8's implicit ones for two buttons.
+		auto options = juce::MessageBoxOptions().withButton("Clear", 1).withButton("Cancel", 0)
+#else
+		auto options = juce::MessageBoxOptions().withButton("Clear").withButton("Cancel")
+#endif
+			.withTitle("Press key(s) on your MIDI keyboard").withParentComponent(parent_);
 		state_.addListener(this);
 		messageBox_ = AlertWindow::showScopedAsync(options, [this](int button) {
 			switch (button) {
