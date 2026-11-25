@@ -72,10 +72,11 @@ set(SOURCES
 	MacroConfig.cpp MacroConfig.h
 	MainComponent.h MainComponent.cpp	
 	Main.cpp
+	MidiLoopbackTest.cpp MidiLoopbackTest.h
 	MidiLogPanel.cpp MidiLogPanel.h
 	OrmLookAndFeel.cpp OrmLookAndFeel.h
 	PatchButtonPanel.cpp PatchButtonPanel.h
-	PatchDiff.cpp PatchDiff.h
+	PatchDiff.cpp PatchDiff.h TextDiffRanges.h PatchTextViews.h
 	PatchHistoryPanel.cpp PatchHistoryPanel.h
 	PatchHolderButton.cpp PatchHolderButton.h
 	PatchListTree.cpp PatchListTree.h
@@ -83,6 +84,7 @@ set(SOURCES
 	PatchSearchComponent.cpp PatchSearchComponent.h
 	PatchTextBox.cpp PatchTextBox.h
 	PatchView.cpp PatchView.h
+	PatchSelectionEvents.h
 	ReceiveManualDumpWindow.cpp ReceiveManualDumpWindow.h
 	RecordingView.cpp RecordingView.h
 	RotaryWithLabel.cpp RotaryWithLabel.h
@@ -120,7 +122,6 @@ set(MIDIKRAFT_LIBRARIES
 		midikraft-behringer-bcr2000
 		midikraft-kawai-k3
 		midikraft-oberheim-matrix1000
-		midikraft-roland-mks50 
 		midikraft-roland-mks80 
 		midikraft-sequential-rev2   
 		midikraft-sequential-ob6  
@@ -141,7 +142,7 @@ if (SPARKLE_UPDATES AND WIN32)
   target_link_directories(KnobKraftOrm PRIVATE "${WINSPARKLE_LIBDIR}")
 endif()
 target_include_directories(KnobKraftOrm SYSTEM
-	PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../third_party/dtl" "${CMAKE_CURRENT_BINARY_DIR}")
+	PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_definitions(KnobKraftOrm PRIVATE JUCE_MODULE_AVAILABLE_gin_gui JUCE_MODULE_AVAILABLE_gin)
 get_target_property(gin_include_dirs gin INTERFACE_INCLUDE_DIRECTORIES)
 target_include_directories(KnobKraftOrm SYSTEM PRIVATE ${gin_include_dirs})

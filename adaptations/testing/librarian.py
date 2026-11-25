@@ -1,6 +1,8 @@
 from collections import deque
 from collections.abc import Iterable
+from dataclasses import dataclass
 from functools import partial
+from threading import Timer
 from typing import List, Callable, Optional, Dict, Deque, Any, Union
 from enum import Enum
 import logging
@@ -44,6 +46,26 @@ def flatten(xss: List[List[Any]]) -> List[Any]:
     return [x for xs in xss for x in xs]
 
 
+def handshake_flag(value) -> bool:
+    if isinstance(value, tuple):
+        return bool(value[0])
+    return bool(value)
+
+
+def bank_finished_reply(value):
+    if isinstance(value, tuple):
+        if len(value) == 3:
+            is_finished, was_successful, next_message = value
+            return bool(is_finished), bool(was_successful), next_message
+        if len(value) == 2:
+            is_finished, next_message = value
+            return bool(is_finished), True, next_message
+        raise Exception("Expected a 2- or 3-element tuple from isBankDumpFinished")
+    if isinstance(value, bool):
+        return value, True, None
+    raise Exception("Expected tuple or bool from isBankDumpFinished")
+
+
 MidiMessageHandler = Callable[[List[int]], None]
 
 
@@ -57,11 +79,15 @@ class MidiController:
     def clear_message_handlers(self):
         self.handlers.clear()
 
+    def remove_message_handler(self, handler: MidiMessageHandler) -> None:
+        if handler in self.handlers:
+            self.handlers.remove(handler)
+
     def send(self, message: List[int]):
         pass
 
     def receive(self, message: List[int]):
-        for handler in self.handlers:
+        for handler in self.handlers.copy():
             handler(message)
 
 
@@ -107,6 +133,30 @@ class BankDownloadMethod(Enum):
     EDIT_BUFFERS = 3
 
 
+class UploadStatus(Enum):
+    ACKNOWLEDGED = "acknowledged"
+    SENT_WITHOUT_ACKNOWLEDGEMENT = "sent_without_acknowledgement"
+    DEVICE_ERROR = "device_error"
+    TIMEOUT = "timeout"
+    CANCELLED = "cancelled"
+    ADAPTATION_ERROR = "adaptation_error"
+
+
+@dataclass
+class UploadResult:
+    status: UploadStatus
+    code: str = ""
+    message: str = ""
+    completed_messages: int = 0
+    outcome_uncertain: bool = False
+
+    def successful(self) -> bool:
+        return self.status in (
+            UploadStatus.ACKNOWLEDGED,
+            UploadStatus.SENT_WITHOUT_ACKNOWLEDGEMENT,
+        )
+
+
 class Librarian:
 
     def __init__(self):
@@ -120,6 +170,7 @@ class Librarian:
         self.max_number_messages_per_patch = 14  # This is to limit memory and computation time when loading large files
         self.max_number_messages_per_bank = 256  # Again, we need to limit miscalculations. But banks might have many more messages
         self._active_midi_controller: Optional[MidiController] = None
+        self._active_upload = None
 
     def determine_bank_download_method(self, adaptation) -> BankDownloadMethod:
         if adaptation_has_implemented(adaptation, "bankDownloadMethodOverride"):
@@ -273,17 +324,69 @@ class Librarian:
             channel: int,
             adaptation,
             patch: List[int],
-            target=None
+            target=None,
+            on_finished: Optional[Callable[[UploadResult], None]] = None,
     ) -> List[List[int]]:
         messages = self.data_file_to_sysex(adaptation, channel, patch, target)
-        self.send_block_of_messages_to_synth(midi_controller, adaptation, messages)
+        self.send_block_of_messages_to_synth(midi_controller, adaptation, messages, on_finished)
         return messages
 
-    def send_block_of_messages_to_synth(self, midi_controller: MidiController, adaptation, messages: List[List[int]]) -> None:
+    def send_block_of_messages_to_synth(
+            self,
+            midi_controller: MidiController,
+            adaptation,
+            messages: List[List[int]],
+            on_finished: Optional[Callable[[UploadResult], None]] = None,
+    ) -> None:
         delay = self.message_delay(adaptation)
         if hasattr(midi_controller, "set_send_delay"):
             midi_controller.set_send_delay(delay)
-        self._send_block(midi_controller, messages)
+
+        if not adaptation_has_implemented(adaptation, "isPartOfUploadReply"):
+            self._send_block(midi_controller, messages)
+            if on_finished is not None:
+                on_finished(UploadResult(
+                    UploadStatus.SENT_WITHOUT_ACKNOWLEDGEMENT,
+                    completed_messages=len(messages),
+                ))
+            return
+
+        timeout = self.upload_reply_timeout(adaptation)
+        if self._active_upload is not None:
+            if on_finished is not None:
+                on_finished(UploadResult(
+                    UploadStatus.ADAPTATION_ERROR,
+                    "upload_busy",
+                    "Another upload is still active",
+                ))
+            return
+        if not messages:
+            if on_finished is not None:
+                on_finished(UploadResult(
+                    UploadStatus.ADAPTATION_ERROR,
+                    "empty_upload",
+                    "The upload produced no MIDI messages",
+                ))
+            return
+
+        state = {
+            "adaptation": adaptation,
+            "controller": midi_controller,
+            "messages": [list(message) for message in messages],
+            "index": 0,
+            "completed": 0,
+            "waiting": False,
+            "used_acknowledgement": False,
+            "timeout_ms": timeout,
+            "timeout_generation": 0,
+            "timer": None,
+            "finished": on_finished,
+        }
+        handler = partial(self._handle_upload_reply, state=state)
+        state["handler"] = handler
+        self._active_upload = state
+        midi_controller.add_message_handler(handler)
+        self._send_next_upload_message(state)
 
     @staticmethod
     def message_delay(adaptation) -> int:
@@ -295,6 +398,214 @@ class Librarian:
             return adaptation.generalMessageDelay()
         return 0
 
+    @staticmethod
+    def upload_reply_timeout(adaptation) -> int:
+        timeout = 5000
+        if adaptation_has_implemented(adaptation, "messageTimings"):
+            timings = adaptation.messageTimings()
+            if not isinstance(timings, dict):
+                raise ValueError("messageTimings must return a dict")
+            timeout = timings.get("uploadReplyTimeoutMs", timeout)
+        if not isinstance(timeout, int) or timeout <= 0:
+            raise ValueError("uploadReplyTimeoutMs must be a positive integer")
+        return timeout
+
+    def _send_next_upload_message(self, state) -> None:
+        while self._active_upload is state and state["index"] < len(state["messages"]):
+            sent_message = state["messages"][state["index"]]
+            expects_reply = True
+            if adaptation_has_implemented(state["adaptation"], "expectsUploadReply"):
+                try:
+                    expects_reply = state["adaptation"].expectsUploadReply(sent_message)
+                except Exception as ex:
+                    self._finish_upload(state, UploadResult(
+                        UploadStatus.ADAPTATION_ERROR,
+                        "invalid_upload_handshake",
+                        str(ex),
+                        state["completed"],
+                    ))
+                    return
+                if not isinstance(expects_reply, bool):
+                    self._finish_upload(state, UploadResult(
+                        UploadStatus.ADAPTATION_ERROR,
+                        "invalid_upload_handshake",
+                        "expectsUploadReply must return a bool",
+                        state["completed"],
+                    ))
+                    return
+
+            state["waiting"] = expects_reply
+            state["used_acknowledgement"] = state["used_acknowledgement"] or expects_reply
+            state["controller"].send(sent_message)
+            if expects_reply:
+                self._schedule_upload_timeout(state)
+                return
+            state["index"] += 1
+            state["completed"] += 1
+
+        if self._active_upload is state:
+            status = (UploadStatus.ACKNOWLEDGED if state["used_acknowledgement"]
+                      else UploadStatus.SENT_WITHOUT_ACKNOWLEDGEMENT)
+            self._finish_upload(state, UploadResult(
+                status,
+                completed_messages=state["completed"],
+            ))
+
+    def _handle_upload_reply(self, message: List[int], state) -> None:
+        if self._active_upload is not state or not state["waiting"]:
+            return
+
+        try:
+            reply = state["adaptation"].isPartOfUploadReply(
+                message,
+                state["messages"][state["index"]],
+            )
+        except Exception as ex:
+            self._finish_upload(state, UploadResult(
+                UploadStatus.ADAPTATION_ERROR,
+                "invalid_upload_reply",
+                str(ex),
+                state["completed"],
+                True,
+            ))
+            return
+
+        if reply is None:
+            return
+        if not isinstance(reply, dict) or not isinstance(reply.get("status"), str):
+            self._finish_upload(state, UploadResult(
+                UploadStatus.ADAPTATION_ERROR,
+                "invalid_upload_reply",
+                "isPartOfUploadReply must return None or a dict with a string status",
+                state["completed"],
+                True,
+            ))
+            return
+
+        status = reply["status"]
+        if status == "error" and "messages" in reply:
+            self._finish_upload(state, UploadResult(
+                UploadStatus.ADAPTATION_ERROR,
+                "invalid_upload_reply",
+                "Upload error must not include response messages",
+                state["completed"],
+                True,
+            ))
+            return
+
+        response = reply.get("messages", [])
+        if not isinstance(response, list) or not all(isinstance(value, int) and 0 <= value < 256 for value in response):
+            self._finish_upload(state, UploadResult(
+                UploadStatus.ADAPTATION_ERROR,
+                "invalid_upload_response",
+                "Upload response messages must be a flat list of bytes",
+                state["completed"],
+                True,
+            ))
+            return
+
+        if status == "continue":
+            self._cancel_upload_timeout(state)
+            self._send_block(state["controller"], response)
+            self._schedule_upload_timeout(state)
+            return
+        if status == "accepted":
+            state["waiting"] = False
+            self._cancel_upload_timeout(state)
+            self._send_block(state["controller"], response)
+            state["index"] += 1
+            state["completed"] += 1
+            self._send_next_upload_message(state)
+            return
+        if status == "error":
+            code = reply.get("code")
+            description = reply.get("message")
+            if not isinstance(code, str) or not code or not isinstance(description, str) or not description:
+                self._finish_upload(state, UploadResult(
+                    UploadStatus.ADAPTATION_ERROR,
+                    "invalid_upload_reply",
+                    "Upload errors require nonempty code and message strings",
+                    state["completed"],
+                    True,
+                ))
+                return
+            self._finish_upload(state, UploadResult(
+                UploadStatus.DEVICE_ERROR,
+                code,
+                description,
+                state["completed"],
+            ))
+            return
+
+        self._finish_upload(state, UploadResult(
+            UploadStatus.ADAPTATION_ERROR,
+            "invalid_upload_reply",
+            f"Unknown upload reply status: {status}",
+            state["completed"],
+            True,
+        ))
+
+    def timeout_upload(self) -> None:
+        if self._active_upload is not None and self._active_upload["waiting"]:
+            self._timeout_upload_state(self._active_upload)
+
+    def _schedule_upload_timeout(self, state) -> None:
+        self._cancel_upload_timeout(state)
+        generation = state["timeout_generation"]
+        timer = Timer(
+            state["timeout_ms"] / 1000,
+            lambda: self._timeout_upload_state(state, generation),
+        )
+        timer.daemon = True
+        state["timer"] = timer
+        timer.start()
+
+    @staticmethod
+    def _cancel_upload_timeout(state) -> None:
+        timer = state.get("timer")
+        state["timer"] = None
+        state["timeout_generation"] += 1
+        if timer is not None:
+            timer.cancel()
+
+    def _timeout_upload_state(self, state, generation=None) -> None:
+        if self._active_upload is not state or not state["waiting"]:
+            return
+        if generation is not None and generation != state["timeout_generation"]:
+            return
+        self._finish_upload(state, UploadResult(
+            UploadStatus.TIMEOUT,
+            "upload_reply_timeout",
+            "Timed out waiting for the synth to acknowledge the upload",
+            state["completed"],
+            True,
+        ))
+
+    def cancel_upload(self) -> None:
+        if self._active_upload is not None:
+            state = self._active_upload
+            self._finish_upload(state, UploadResult(
+                UploadStatus.CANCELLED,
+                "upload_cancelled",
+                "Upload cancelled",
+                state["completed"],
+                state["waiting"],
+            ))
+
+    def _finish_upload(self, state, result: UploadResult) -> None:
+        if self._active_upload is not state:
+            return
+        self._cancel_upload_timeout(state)
+        self._active_upload = None
+        state["waiting"] = False
+        controller = state["controller"]
+        if hasattr(controller, "remove_message_handler"):
+            controller.remove_message_handler(state["handler"])
+        if hasattr(controller, "mark_finished"):
+            controller.mark_finished()
+        if state["finished"] is not None:
+            state["finished"](result)
+
     def _finish_download(self, midi_controller: MidiController, patches: List[List[int]]):
         if hasattr(midi_controller, "mark_finished"):
             midi_controller.mark_finished()
@@ -302,6 +613,13 @@ class Librarian:
             midi_controller.clear_message_handlers()
         if self.on_finished is not None:
             self.on_finished(patches)
+
+    @staticmethod
+    def _cancel_download(midi_controller: MidiController):
+        if hasattr(midi_controller, "mark_cancelled"):
+            midi_controller.mark_cancelled()
+        if hasattr(midi_controller, "clear_message_handlers"):
+            midi_controller.clear_message_handlers()
 
     @staticmethod
     def _send_block(midi_controller: MidiController, messages):
@@ -317,16 +635,40 @@ class Librarian:
         """
         Handle the next message incoming during a bank dump download
         """
-        is_part = (
-            adaptation_has_implemented(adaptation, "isPartOfBankDump") and adaptation.isPartOfBankDump(message)
-        ) or adaptation.isBankDumpFinished([message])
+        is_part_of_bank_dump = False
+        if adaptation_has_implemented(adaptation, "isPartOfBankDump"):
+            part_reply = adaptation.isPartOfBankDump(message)
+            if isinstance(part_reply, tuple):
+                is_part_of_bank_dump, next_message = part_reply
+                if next_message:
+                    self._send_block(midi_controller, next_message)
+            elif isinstance(part_reply, bool):
+                is_part_of_bank_dump = part_reply
+            else:
+                raise Exception("Expected tuple or bool from isPartOfBankDump")
+        else:
+            is_finished, was_successful, next_message = bank_finished_reply(
+                adaptation.isBankDumpFinished([message]))
+            if next_message:
+                self._send_block(midi_controller, next_message)
+            if is_finished and was_successful:
+                # Simple case - the bank dump is only a single message and no isPartOfBankDump() has been implemented
+                is_part_of_bank_dump = True
 
-        if is_part:
-            # This is part of the bank dump. Store in self.current_download_message and check if we're done
+        if is_part_of_bank_dump:
             self.current_download_messages.append(message)
-            if adaptation.isBankDumpFinished(self.current_download_messages):
+
+        is_finished, was_successful, next_message = bank_finished_reply(
+            adaptation.isBankDumpFinished(self.current_download_messages))
+        if next_message:
+            self._send_block(midi_controller, next_message)
+
+        if is_finished:
+            if was_successful:
                 patches = self.load_sysex(adaptation, self.current_download_messages)
                 self._finish_download(midi_controller, patches)
+            else:
+                self._cancel_download(midi_controller)
 
     def _start_download_next_program_buffer(self, midi_controller: MidiController, adaptation, channel: int) -> None:
         """
@@ -424,13 +766,14 @@ class Librarian:
 
     def load_sysex(self, adaptation, sysex_messages: List[List[int]]) -> List[List[int]]:
         results: List[List[int]] = []
-        program_dumps_by_id: Dict[str, List[int]] = {}
+        program_dump_counts_by_id: Dict[str, int] = {}
 
         if adaptation_has_program_dump_capability(adaptation):
             current_program_dumps: Deque[List[int]] = deque()
             for message in sysex_messages:
                 # Try to parse and load these messages as program dumps
-                if adaptation_has_implemented(adaptation, "isPartOfSingleProgramDump") and adaptation.isPartOfSingleProgramDump(message) or adaptation.isSingleProgramDump(message):
+                is_part = adaptation_has_implemented(adaptation, "isPartOfSingleProgramDump") and handshake_flag(adaptation.isPartOfSingleProgramDump(message))
+                if is_part or adaptation.isSingleProgramDump(message):
                     current_program_dumps.append(message)
                     while len(current_program_dumps) > self.max_number_messages_per_patch:
                         logging.debug(f"Dropping message during parsing as potential number of MIDI messages per patch is larger than {self.max_number_messages_per_patch}")
@@ -440,7 +783,8 @@ class Librarian:
                         patch = sliding_window
                         results.append(patch)
                         if adaptation_has_implemented(adaptation, "calculateFingerprint"):
-                            program_dumps_by_id[adaptation.calculateFingerprint(patch)] = patch
+                            patch_id = adaptation.calculateFingerprint(patch.copy())
+                            program_dump_counts_by_id[patch_id] = program_dump_counts_by_id.get(patch_id, 0) + 1
                         current_program_dumps.clear()
 
         if adaptation_has_edit_buffer_capability(adaptation):
@@ -448,7 +792,8 @@ class Librarian:
             patch_no = 0
             for message in sysex_messages:
                 # Try to parse and load these messages as edit buffers
-                if adaptation_has_implemented(adaptation, "isPartOfEditBufferDump") and adaptation.isPartOfEditBufferDump(message) or adaptation.isEditBufferDump(message):
+                is_part = adaptation_has_implemented(adaptation, "isPartOfEditBufferDump") and handshake_flag(adaptation.isPartOfEditBufferDump(message))
+                if is_part or adaptation.isEditBufferDump(message):
                     current_edit_buffers.append(message)
                     if len(current_edit_buffers) > self.max_number_messages_per_patch:
                         logging.debug(f"Dropping message during parsing as potential number of MIDI messages per patch is larger than {self.max_number_messages_per_patch}")
@@ -457,8 +802,8 @@ class Librarian:
                     if adaptation.isEditBufferDump(sliding_window):
                         patch = sliding_window
                         if adaptation_has_implemented(adaptation, "calculateFingerprint"):
-                            patch_id = adaptation.calculateFingerprint(patch)
-                            if patch_id not in program_dumps_by_id:
+                            patch_id = adaptation.calculateFingerprint(patch.copy())
+                            if patch_id not in program_dump_counts_by_id:
                                 results.append(patch)
                             else:
                                 # Ignore edit buffer, as we already loaded a program dump with the same ID
@@ -468,27 +813,45 @@ class Librarian:
                         current_edit_buffers.clear()
 
         if adaptation_has_bank_dump_capability(adaptation):
+            if adaptation_has_implemented(adaptation, "isPartOfBankDump"):
+                adaptation.isPartOfBankDump([])
             current_bank: Deque[List[int]] = deque()
+            unmatched_program_dump_counts_by_id = program_dump_counts_by_id.copy()
+
+            def append_bank_patches(patches: List[List[int]]) -> None:
+                for patch in patches:
+                    if adaptation_has_implemented(adaptation, "calculateFingerprint"):
+                        patch_id = adaptation.calculateFingerprint(patch.copy())
+                        unmatched_count = unmatched_program_dump_counts_by_id.get(patch_id, 0)
+                        if unmatched_count > 0:
+                            unmatched_program_dump_counts_by_id[patch_id] = unmatched_count - 1
+                            continue
+                    results.append(patch)
+
             for message in sysex_messages:
                 # Try to parse and load these messages as a bank dump
-                if adaptation_has_implemented(adaptation, "isPartOfBankDump") and adaptation.isPartOfBankDump(message) or adaptation.isBankDumpFinished([message]):
+                is_part = adaptation_has_implemented(adaptation, "isPartOfBankDump") and handshake_flag(adaptation.isPartOfBankDump(message))
+                single_finished, single_successful, _ = bank_finished_reply(adaptation.isBankDumpFinished([message]))
+                if is_part or (single_finished and single_successful):
                     current_bank.append(message)
                     if len(current_bank) > self.max_number_messages_per_bank:
                         logging.debug(f"Dropping message during parsing as potential number of MIDI messages per bank is larger than {self.max_number_messages_per_bank}")
                         current_bank.popleft()
                     sliding_window: List[List[int]] = list(current_bank)
-                    if adaptation.isBankDumpFinished(sliding_window):
+                    is_finished, was_successful, _ = bank_finished_reply(
+                        adaptation.isBankDumpFinished(sliding_window))
+                    if is_finished and was_successful:
                         if adaptation_has_implemented(adaptation, "extractPatchesFromAllBankMessages"):
                             more_patches = adaptation.extractPatchesFromAllBankMessages(sliding_window)
                             logging.info(f"Loaded bank dump with {len(more_patches)} patches")
-                            results.extend(more_patches)
+                            append_bank_patches(more_patches)
                             current_bank.clear()
                         else:
                             more_patches = adaptation.extractPatchesFromBank(sliding_window[0])
                             if more_patches:
                                 logging.info(f"Loaded bank dump from single message with {len(more_patches)} patches")
                                 split_patches = knobkraft.splitSysex(more_patches)
-                                results.extend(split_patches)
+                                append_bank_patches(split_patches)
                             current_bank.clear()
 
 

@@ -12,12 +12,14 @@ set(adaptation_files
         "Akai_AX80.py"
 	"AlesisAndromedaA6.py"
 	"BC_Kijimi.py"
-	"Behringer Deepmind 12.py" "Behringer_Wave.py" "Behringer_Pro_800.py"
+	"Behringer Deepmind 12.py" "Behringer_Wave.py" "Behringer_Pro_800.py" "Behringer_UB-Xa.py"
+	"Casio CZ-101.py"
+	"Clavia_Nord_Lead.py"
 	"DSI Pro 2.py" "DSI Prophet 08.py" "DSI_Evolver.py" "DSI_Mopho.py" "DSI_Mopho_X4.py" "DSI_Tetra.py" "DSI Prophet 12.py" 
 	"ElectraOne.py"
         "Elektron_AnalogRytm.py" "Elektron_Digitone.py"
 	"Emu_Morpheus.py"
-	"Ensoniqesq1.py" "Ensoniq_VFX.py"
+	"Ensoniqesq1.py" "Ensoniq_VFX.py" "Ensoniq_Mirage_Soundprocess.py"
 	"GrooveSynthesis_3rdWave.py" 
 	"JB_Solaris.py"
 	"KawaiK1.py" "Kawai K4.py" "KawaiK5000.py"
@@ -29,8 +31,8 @@ set(adaptation_files
 	"OberheimOB8.py" "OberheimOBX.py" "OberheimOBXa.py" "OberheimOBX8.py" "Oberheim_Teo5.py"
 	"PioneerToraiz-AS1.py" 
 	"QuasimidiCyber6.py" 
-	"Roland JX-8P.py" "Roland_JV80.py" "Roland_JV1080.py" "Roland_XV3080.py" "RolandD50.py" "Roland_MKS70V4.py" "Roland_TD-07.py" "Roland_U20_U220.py" "Roland_JD_Xi.py" "Roland_SE02.py"
-	"Sequential Pro 3.py" "Sequential Prophet 5 Rev4.py" "Sequential Prophet 6.py" "Sequential Prophet X.py" "Sequential_Take_5.py" 
+	"Roland JX-8P.py" "Roland_JV80.py" "Roland_JV1080.py" "Roland_XV3080.py" "RolandD50.py" "Roland_MKS50.py" "Roland_MKS70V4.py" "Roland_TD-07.py" "Roland_U20_U220.py" "Roland_JD_Xi.py" "Roland_SE02.py"
+	"Sequential_Fourm.py" "Sequential Pro 3.py" "Sequential Prophet 5 Rev4.py" "Sequential Prophet 6.py" "Sequential Prophet X.py" "Sequential_Take_5.py" "Sequential_Trigon6.py"
 	"Studiologic Sledge.py" 
 	"Waldorf Blofeld.py" "Waldorf_Kyra.py" "Waldorf_MicroWave.py" "Waldorf_M.py" "Waldorf_Pulse.py"
 	"YamahaDX7.py" "YamahaDX7II.py" "Yamaha_TX7.py" "Yamaha_FS1R.py" "YamahaRefaceDX.py" "YamahaRefaceCP.py" "Yamaha_TX81Z.py" "Yamaha-YC-Series.py"
@@ -42,12 +44,21 @@ set(adaptation_files_test_shipped
     "test_adaptations.py"
     "test_AndromedaA6.py"
     "test_BC_Kijimi.py"
+    "test_Behringer_UBXa.py"
+    "test_Casio_CZ101.py"
+    "test_Clavia_Nord_Lead.py"
+    "test_Ensoniq_Mirage_Soundprocess.py"
     "test_implementation_status.py"
     "test_jv80.py"
     "test_JV1080.py"
     "test_KorgMS2000.py"
+	"test_KawaiK5000.py"
+    "test_Roland_MKS50.py"
     "test_Roland_MKS70_V4.py"
     "test_Roland_XV3080.py"
+    "test_Roland_SE02.py"
+    "test_Sequential_Fourm.py"
+    "test_Sequential_Pro_3.py"
     "test_YamahaRefaceDX.py"
 )
 
@@ -77,6 +88,7 @@ set(Sources
 	GenericLegacyLoaderCapability.cpp GenericLegacyLoaderCapability.h
 	GenericPatch.cpp GenericPatch.h
 	GenericProgramDumpCapability.cpp GenericProgramDumpCapability.h
+	GenericUploadHandshakeCapability.cpp GenericUploadHandshakeCapability.h
 	PythonUtils.cpp PythonUtils.h
 	${adaptation_files}
 	${adaptation_files_test_shipped}

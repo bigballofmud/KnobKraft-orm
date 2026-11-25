@@ -25,7 +25,6 @@
 #include "Matrix1000.h"
 #include "BCR2000.h"
 #include "MKS80.h"
-#include "MKS50.h"
 
 #include "GenericAdaptation.h"
 #include "PatchInterchangeFormat.h"
@@ -56,7 +55,7 @@ const std::string kExportPIF { "exportPIF" };
 const std::string kShowDiff{ "showDiff" };
 const std::string kCopyBankPatchNames{ "copyBankPatchNames" };
 const std::string kSynthDetection{ "synthDetection" };
-const std::string kLoopDetection{ "loopDetection" };
+const std::string kMidiTest{ "midiTest" };
 const std::string kFullMidiLog{ "fullMidiLog" };
 const std::string kSysexMidiLog{ "sysexMidiLog" };
 const std::string kSelectAdaptationDirect{ "selectAdaptationDir" };
@@ -131,6 +130,7 @@ public:
 	{
 		return device() && device()->wasDetected();
 	}
+	bool canCheckConnection() override { return device() && device()->deviceDetectSleepMS() >= 0; }
 
 
 	Colour getColour() override
@@ -216,7 +216,6 @@ MainComponent::MainComponent(bool makeYourOwnSize) :
 	synths.emplace_back(midikraft::SynthHolder(std::make_shared<midikraft::KawaiK3>(), buttonColour));
 	synths.emplace_back(midikraft::SynthHolder(std::make_shared<midikraft::OB6>(), buttonColour));
 	synths.emplace_back(midikraft::SynthHolder(std::make_shared<midikraft::Rev2>(), buttonColour));
-	synths.emplace_back(midikraft::SynthHolder(std::make_shared<midikraft::MKS50>(), buttonColour));
 	synths.emplace_back(midikraft::SynthHolder(std::make_shared<midikraft::MKS80>(), buttonColour));
 	synths.emplace_back(midikraft::SynthHolder(std::make_shared<midikraft::Virus>(), buttonColour));
 	synths.emplace_back(midikraft::SynthHolder(bcr2000, buttonColour));
@@ -272,7 +271,7 @@ MainComponent::MainComponent(bool makeYourOwnSize) :
 				{ "Merge multiple databases..."  },
 				{ "Quit" } } } },
 		{1, { "Edit", { { "Copy patch to clipboard..." }, { kCopyBankPatchNames}, { "Bulk rename patches..."},  {"Delete patches..."}, {"Reindex patches..."}}}},
-		{2, { "MIDI", { { "Auto-detect synths" }, { kSynthDetection},  { kRetrievePatches }, { kFetchEditBuffer }, { kReceiveManualDump }, { kLoopDetection}, { kFullMidiLog }, { kSysexMidiLog} }}},
+		{2, { "MIDI", { { "Auto-detect synths" }, { kSynthDetection},  { kRetrievePatches }, { kFetchEditBuffer }, { kReceiveManualDump }, { kMidiTest}, { kFullMidiLog }, { kSysexMidiLog} }}},
 		{3, { "Patches", { { kLoadSysEx}, { kExportSysEx }, { kExportBank},  { kExportPIF}, { kShowDiff} }}},
 		{4, { "Categories", { { "Edit categories" }, {{ "Show category naming rules file"}},  {"Edit category import mapping"},  {"Rerun auto categorize"}}}},
 		{5, { "View", { { "Open 2nd window" }, {"Scale 75%"}, {"Scale 100%"}, {"Scale 125%"}, {"Scale 150%"}, {"Scale 175%"}, {"Scale 200%"}}}},
@@ -290,7 +289,7 @@ MainComponent::MainComponent(bool makeYourOwnSize) :
 
 	// Define the actions in the menu bar in form of an invisible LambdaButtonStrip 
 	LambdaButtonStrip::TButtonMap buttons = {
-	{ "Auto-detect synths", { "Auto-detect synths", [this]() {
+	{ "Find all synths...", { "Auto-detect synths", [this]() {
 		setupView_->autoDetect();
 	}, juce::KeyPress::F1Key } },
 	{ "Import patches from synth", { kRetrievePatches, [this]() {
@@ -320,11 +319,11 @@ MainComponent::MainComponent(bool makeYourOwnSize) :
     { "Copy names of current bank to clipboard...", { kCopyBankPatchNames , [this]() {
         patchView_->copyBankPatchNamesToClipboard();
     } } },
-	{ "Quick check connectivity", { kSynthDetection, [this]() {
+	{ "Check saved connections", { kSynthDetection, [this]() {
 		setupView_->quickConfigure();
 	}, juce::KeyPress::F2Key } },
-	{ "Check for MIDI loops", { kLoopDetection, [this]() {
-		setupView_->loopDetection();
+	{ "MIDI Test...", { kMidiTest, [this]() {
+		setupView_->midiTest();
 	} } },
 	{ "Log all MIDI messages", { kFullMidiLog, []() {
 		midikraft::MidiController::instance()->setMidiLogLevel(midikraft::MidiLogLevel::ALL_BUT_REALTIME);
@@ -535,9 +534,6 @@ MainComponent::MainComponent(bool makeYourOwnSize) :
 
 	// Install our MidiLogger
 	midikraft::MidiController::instance()->setMidiLogFunction([this](const MidiMessage& message, const String& source, bool isOut) {
-		if (keyboardView_) {
-			keyboardView_->handleMidiMessage(message, source, isOut);
-		}
 		midiLogView_.log().addMessageToList(message, source, isOut);
 		});
 
@@ -562,7 +558,7 @@ MainComponent::MainComponent(bool makeYourOwnSize) :
 	// Make sure you set the size of the component after
 	// you add any child components.
 	if (makeYourOwnSize) {
-		juce::Rectangle<int> mainScreenSize = Desktop::getInstance().getDisplays().getPrimaryDisplay()->userArea;
+		juce::Rectangle<int> mainScreenSize = Desktop::getInstance().getDisplays().getPrimaryDisplay()->userBounds.toNearestInt();
 		auto initialSize = mainScreenSize.reduced(100);
 		setSize(initialSize.getWidth(), initialSize.getHeight());
 	}
@@ -926,7 +922,7 @@ float MainComponent::calcAcceptableGlobalScaleFactor() {
 	// The idea is that we use a staircase of "good" scaling factors matching the Windows HighDPI settings of 100%, 125%, 150%, 175%, and 200%
 	// and find out what is the largest scale factor that we still retain a virtual height of 1024 pixels (which is what I had designed this for at the start)
 	// So effectively, with a globalScaling of 1.0 (standard Windows normal DPI), this can make it only bigger, and with a Retina scaling factor 2.0 (Mac book pro) this can only shrink
-	auto availableHeight = (float)Desktop::getInstance().getDisplays().getPrimaryDisplay()->userArea.getHeight();
+	auto availableHeight = (float)Desktop::getInstance().getDisplays().getPrimaryDisplay()->userBounds.getHeight();
 	std::vector<float> scales = { 0.75f, 1.0f, 1.25f, 1.50f, 1.75f, 2.00f };
 	float goodScale = 0.75f;
 	for (auto scale : scales) {
@@ -944,15 +940,13 @@ void MainComponent::resized()
 	//auto topRow = area.removeFromTop(40).withTrimmedLeft(8).withTrimmedRight(8).withTrimmedTop(8);
 	//patchList_.setBounds(topRow);
 
-	if (UIModel::instance()->synthList_.activeSynths().size() > 1) {
+	if (!UIModel::instance()->synthList_.activeSynths().empty()) {
 		auto secondTopRow = area.removeFromTop(LAYOUT_LINE_SPACING + 20 + LAYOUT_INSET_NORMAL)
 			.withTrimmedLeft(LAYOUT_INSET_NORMAL).withTrimmedRight(LAYOUT_INSET_NORMAL).withTrimmedTop(LAYOUT_INSET_NORMAL);
 		synthList_.setBounds(secondTopRow);
 		synthList_.setVisible(true);
 	}
 	else {
-		//TODO - one synth needs to be implemented differently.
-// At most one synth selected - do not display the large synth selector row you need when you use the software with multiple synths
 		synthList_.setVisible(false);
 	}
 	splitter_->setBounds(area);
@@ -1011,6 +1005,10 @@ void MainComponent::refreshSynthList() {
 			// What did you put into the list?
 			jassert(false);
 		}
+		}, [this](std::shared_ptr<ActiveListItem> const &clicked) {
+			if (auto synth = std::dynamic_pointer_cast<ActiveSynthHolder>(clicked)) setupView_->checkConnection(synth->device());
+		}, [this](std::shared_ptr<ActiveListItem> const &clicked) {
+			if (auto synth = std::dynamic_pointer_cast<ActiveSynthHolder>(clicked)) setupView_->findSynth(synth->device());
 		});
 
 	// Need to make sure the correct button is pressed
@@ -1026,6 +1024,15 @@ void MainComponent::changeListenerCallback(ChangeBroadcaster* source)
 		// Kick off a new quickconfigure, as the MIDI interface setup has changed and synth available will be different
 		auto synthList = UIModel::instance()->synthList_.activeSynths();
 		quickconfigreDebounce_.callDebounced([this, synthList]() {
+			// A modal detection dialog still pumps USB hot-plug events. Defer the
+			// automatic check until its worker has released the MIDI inputs.
+			if (setupView_->isDetecting()) {
+				Component::SafePointer<MainComponent> safeThis(this);
+				MessageManager::callAsync([safeThis]() {
+					if (safeThis) safeThis->changeListenerCallback(midikraft::MidiController::instance());
+				});
+				return;
+			}
 			auto myList = synthList;
 			autodetector_.quickconfigure(myList);
 			}, 2000);

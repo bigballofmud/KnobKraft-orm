@@ -21,6 +21,7 @@
 #include "GenericHasBanksCapability.h"
 #include "GenericHasBankDescriptorsCapability.h"
 #include "GenericLegacyLoaderCapability.h"
+#include "GenericUploadHandshakeCapability.h"
 
 #ifdef _MSC_VER
 #pragma warning ( push )
@@ -31,6 +32,7 @@
 #pragma warning ( pop )
 #endif
 #include <memory>
+#include <set>
 #include <spdlog/spdlog.h>
 #include "SpdLogJuce.h"
 
@@ -82,9 +84,14 @@ namespace knobkraft {
 		* kFriendlyBankName = "friendlyBankName",
 		* kFriendlyProgramName = "friendlyProgramName",
 		* kSetupHelp = "setupHelp",
+		* kGetClearText = "getClearText",
 		* kGetStoredTags = "storedTags",
 		* kIndicateBankDownloadMethod= "bankDownloadMethodOverride",
-		* kMessageTimings = "messageTimings";
+		* kOnPatchSelected = "onPatchSelected",
+		* kOnPatchSent = "onPatchSent",
+		* kMessageTimings = "messageTimings",
+		* kExpectsUploadReply = "expectsUploadReply",
+		* kIsPartOfUploadReply = "isPartOfUploadReply";
 
 	std::vector<const char*> kAdaptationPythonFunctionNames = {
 		kName,
@@ -124,8 +131,13 @@ namespace knobkraft {
 		kFriendlyBankName,
 		kFriendlyProgramName,
 		kSetupHelp,
+		kGetClearText,
 		kGetStoredTags,
-		kMessageTimings
+		kMessageTimings,
+		kOnPatchSelected,
+		kOnPatchSent,
+		kExpectsUploadReply,
+		kIsPartOfUploadReply
 	};
 
 	std::vector<const char*> kMinimalRequiredFunctionNames = {
@@ -135,13 +147,21 @@ namespace knobkraft {
 	};
 
 	const char* kUserAdaptationsFolderSettingsKey = "user_adaptations_folder";
+	constexpr auto kAdaptationApiVersionAttribute = "_knobkraft_adaptation_api_version";
+	constexpr int kAdaptationApiVersion = 3;
 
 	std::unique_ptr<py::scoped_interpreter> sGenericAdaptationPythonEmbeddedGuard;
 	std::unique_ptr<py::gil_scoped_release> sGenericAdaptationDontLockGIL;
 	std::unique_ptr<PyStdErrOutStreamRedirect> sGenericAdaptationPyOutputRedirect;
 
 	void checkForPythonOutputAndLog() {
-		sGenericAdaptationPyOutputRedirect->flushToLogger("Adaptation");
+		if (sGenericAdaptationPyOutputRedirect) {
+			sGenericAdaptationPyOutputRedirect->flushToLogger("Adaptation");
+		}
+	}
+
+	void publishAdaptationApiVersion() {
+		py::module_::import("sys").attr(kAdaptationApiVersionAttribute) = kAdaptationApiVersion;
 	}
 
 	class FatalAdaptationException : public std::runtime_error {
@@ -152,6 +172,7 @@ namespace knobkraft {
 	GenericAdaptation::GenericAdaptation(std::string const& pythonModuleFilePath) : filepath_(pythonModuleFilePath)
 	{
 		py::gil_scoped_acquire acquire;
+		publishAdaptationApiVersion();
 		editBufferCapabilityImpl_ = std::make_shared<GenericEditBufferCapability>(this);
 		programDumpCapabilityImpl_ = std::make_shared<GenericProgramDumpCapability>(this);
 		bankDumpCapabilityImpl_ = std::make_shared<GenericBankDumpCapability>(this);
@@ -161,6 +182,7 @@ namespace knobkraft {
 		hasBankDumpSendCapabilityImpl_ = std::make_shared<GenericBankDumpSendCapability>(this);
 		legacyLoaderCapabilityImpl_ = std::make_shared<GenericLegacyLoaderCapability>(this);
 		customProgramChangeCapabilityImpl_ = std::make_shared<GenericCustomProgramChangeCapability>(this);
+		uploadHandshakeCapabilityImpl_ = std::make_shared<GenericUploadHandshakeCapability>(this);
 		try {
 			// Validate that the filename is a good idea
 			/*auto result = py::dict("filename"_a = pythonModuleFilePath);
@@ -189,17 +211,23 @@ namespace knobkraft {
 	GenericAdaptation::GenericAdaptation(pybind11::module adaptationModule)
 	{
 		py::gil_scoped_acquire acquire;
+		publishAdaptationApiVersion();
 		editBufferCapabilityImpl_ = std::make_shared<GenericEditBufferCapability>(this);
 		programDumpCapabilityImpl_ = std::make_shared<GenericProgramDumpCapability>(this);
 		bankDumpCapabilityImpl_ = std::make_shared<GenericBankDumpCapability>(this);
 		bankDumpRequestCapabilityImpl_ = std::make_shared<GenericBankDumpRequestCapability>(this);
+		hasBanksCapabilityImpl_ = std::make_shared<GenericHasBanksCapability>(this);
+		hasBankDescriptorsCapabilityImpl_ = std::make_shared<GenericHasBankDescriptorsCapability>(this);
+		hasBankDumpSendCapabilityImpl_ = std::make_shared<GenericBankDumpSendCapability>(this);
 		legacyLoaderCapabilityImpl_ = std::make_shared<GenericLegacyLoaderCapability>(this);
 		customProgramChangeCapabilityImpl_ = std::make_shared<GenericCustomProgramChangeCapability>(this);
+		uploadHandshakeCapabilityImpl_ = std::make_shared<GenericUploadHandshakeCapability>(this);
 		adaptation_module = adaptationModule;
 	}
 
 	GenericAdaptation::~GenericAdaptation()
 	{
+		cancelActiveUpload();
 		py::gil_scoped_acquire gil;
 		adaptation_module.release();
 	}
@@ -208,6 +236,7 @@ namespace knobkraft {
 	{
 		py::gil_scoped_acquire acquire;
 		try {
+			publishAdaptationApiVersion();
 			auto importlib = py::module::import("importlib.util");
 			checkForPythonOutputAndLog();
 			auto spec = importlib.attr("spec_from_loader")(moduleName, py::none()); // Create an empty module with the right name
@@ -673,6 +702,30 @@ namespace knobkraft {
 		}
 	}
 
+	midikraft::PatchTextViews GenericAdaptation::getClearText(midikraft::DataFile const& patch) const
+	{
+		py::gil_scoped_acquire acquire;
+		if (!pythonModuleHasFunction(kGetClearText)) return {};
+		try {
+			// Pass a copy, just like the other patch callbacks. Never change stored data.
+			std::vector<int> data(patch.data().begin(), patch.data().end());
+			auto views = py::cast<midikraft::PatchTextViews>(callMethod(kGetClearText, data));
+			std::set<std::string> names;
+			for (auto const& view : views) {
+				if (view.first.empty() || !names.insert(view.first).second) {
+					throw std::runtime_error("getClearText view names must be nonempty and unique");
+				}
+			}
+			return views;
+		}
+		catch (std::exception& ex) {
+			// In particular, consume Python errors here so a faulty optional view
+			// cannot prevent the raw view or subsequent adaptation calls from working.
+			logAdaptationError(kGetClearText, ex);
+		}
+		return {};
+	}
+
 	int GenericAdaptation::defaultReplyTimeoutMs() const
 	{
 		py::gil_scoped_acquire acquire;
@@ -1108,6 +1161,90 @@ namespace knobkraft {
 			return true;
 		}
 		return false;
+	}
+
+	bool GenericAdaptation::hasCapability(midikraft::UploadHandshakeCapability** outCapability) const
+	{
+		py::gil_scoped_acquire acquire;
+		if (pythonModuleHasFunction(kIsPartOfUploadReply)) {
+			*outCapability = uploadHandshakeCapabilityImpl_.get();
+			return true;
+		}
+		return false;
+	}
+
+	bool GenericAdaptation::hasCapability(std::shared_ptr<midikraft::UploadHandshakeCapability>& outCapability) const
+	{
+		midikraft::UploadHandshakeCapability* capability;
+		if (hasCapability(&capability)) {
+			outCapability = uploadHandshakeCapabilityImpl_;
+			return true;
+		}
+		return false;
+	}
+
+	std::vector<MidiMessage> GenericAdaptation::onPatchSelected(MidiChannel channel, std::vector<uint8> const& patchData) const
+	{
+		return patchEventMessages(kOnPatchSelected, channel, patchData);
+	}
+
+	std::vector<MidiMessage> GenericAdaptation::onPatchSent(MidiChannel channel, std::vector<uint8> const& patchData) const
+	{
+		return patchEventMessages(kOnPatchSent, channel, patchData);
+	}
+
+	std::vector<MidiMessage> GenericAdaptation::patchEventMessages(const char* event, MidiChannel channel, std::vector<uint8> const& patchData) const
+	{
+		py::gil_scoped_acquire acquire;
+		if (!pythonModuleHasFunction(event)) return {};
+		try {
+			int channelNumber = channel.isValid() ? channel.toZeroBasedInt() : -1;
+			std::vector<int> data(patchData.begin(), patchData.end());
+			auto result = callMethod(event, channelNumber, data);
+			if (result.is_none()) return {};
+			auto bytes = result.cast<std::vector<int>>();
+			std::vector<uint8> midi;
+			for (int byte : bytes) {
+				if (byte < 0 || byte > 255) throw std::invalid_argument("Hook MIDI bytes must be in the range 0..255");
+				midi.push_back(static_cast<uint8>(byte));
+			}
+
+			// Validate the entire result before sending anything. Require complete messages
+			// with explicit status bytes; a truncated hook result must not send half a command.
+			std::vector<MidiMessage> messages;
+			for (size_t start = 0; start < midi.size();) {
+				auto status = midi[start];
+				if (status < 0x80 || status == 0xf4 || status == 0xf5 || status == 0xf7 || status == 0xf9 || status == 0xfd) {
+					throw std::invalid_argument("Hook MIDI must contain complete messages with explicit status bytes");
+				}
+				size_t end;
+				if (status == 0xf0) {
+					end = start + 1;
+					while (end < midi.size() && midi[end] < 0x80) ++end;
+					if (end == midi.size() || midi[end] != 0xf7 || end == start + 1) {
+						throw std::invalid_argument("Hook SysEx must contain a payload and end with F7");
+					}
+					++end;
+				}
+				else {
+					end = start + static_cast<size_t>(MidiMessage::getMessageLengthFromFirstByte(status));
+					if (end > midi.size()) throw std::invalid_argument("Hook MIDI message is truncated");
+					for (size_t i = start + 1; i < end; ++i) {
+						if (midi[i] >= 0x80) throw std::invalid_argument("Hook MIDI data bytes must be in the range 0..127");
+					}
+				}
+				messages.emplace_back(midi.data() + start, static_cast<int>(end - start), 0.0);
+				start = end;
+			}
+			return messages;
+		}
+		catch (py::error_already_set& ex) {
+			logAdaptationError(event, ex);
+		}
+		catch (std::exception& ex) {
+			logAdaptationError(event, ex);
+		}
+		return {};
 	}
 
 	void GenericAdaptation::logAdaptationError(const char* methodName, std::exception& ex) const
