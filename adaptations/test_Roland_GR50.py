@@ -426,11 +426,23 @@ def test_create_detect_message_is_own_sysex():
     assert isOwnSysex(createDeviceDetectMessage(0))
 
 
-def test_channel_detected_from_system_setup():
+def test_channel_is_device_id_offset_not_basic_midi_channel():
     data = [0] * SYSTEM_SETUP_SIZE
-    data[1] = 5   # MIDI channel = 5
-    response = _dt1(list(SYSTEM_SETUP_ADDR), data)
-    assert channelIfValidDeviceResponse(response) == 5
+    data[1] = 15  # basic MIDI channel 16 — must be ignored
+    response = _dt1(list(SYSTEM_SETUP_ADDR), data, device_id=0x10)
+    assert channelIfValidDeviceResponse(response) == 0
+
+
+@pytest.mark.parametrize("unit_offset", [0, 1, 7, 15])
+def test_detect_channel_round_trips_to_same_device_id(unit_offset):
+    # The channel returned on detection is saved by KnobKraft and fed back to
+    # createDeviceDetectMessage for the startup check; it must address the same unit.
+    device_id = 0x10 + unit_offset
+    data = [0] * SYSTEM_SETUP_SIZE
+    data[1] = 15
+    response = _dt1(list(SYSTEM_SETUP_ADDR), data, device_id=device_id)
+    channel = channelIfValidDeviceResponse(response)
+    assert createDeviceDetectMessage(channel)[2] == device_id
 
 
 def test_wrong_manufacturer_not_detected():

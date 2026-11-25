@@ -275,8 +275,11 @@ def channelIfValidDeviceResponse(message: List[int]) -> int:
         return -1
     if command == COMMAND_DT1 and address == SYSTEM_SETUP_ADDR:
         _device_id = message[2]
-        if len(data) >= 2 and 0 <= data[1] <= 15:
-            return data[1]
+        # Return the device-ID offset (Unit# - 1), not the GR-50's basic MIDI channel
+        # stored in data[1].  KnobKraft saves this value as the synth's "channel" and
+        # passes it back to createDeviceDetectMessage for the startup check, which
+        # turns it into device ID 0x10 + channel.  Returning the basic channel made
+        # that check address the wrong unit (e.g. 0x1F instead of 0x10).
         return message[2] & 0x0F
     return -1
 
