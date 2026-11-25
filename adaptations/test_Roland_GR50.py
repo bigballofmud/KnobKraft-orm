@@ -12,12 +12,25 @@
 #       trigger each subsequent chunk only after the previous DT1 arrives
 #     - Both banks: Internal Patches (0–63) and User Tones (64–127)
 #     - All major KnobKraft API functions: detect, edit buffer, program dump, rename, fingerprint
+#     - Real data from a GR-50 bulk dump (testData/Roland_GR50/GR50_bulk_dump.syx)
+#
+#   The shared suite (pytest test_adaptations.py --adaptation Roland_GR50.py) additionally drives
+#   full bank downloads through a mock GR-50 via make_test_data() and checks every request sent.
 #
 
-import math
 import pytest
+import Roland_GR50
 from Roland_GR50 import *
 import knobkraft.sysex as sysex
+
+
+@pytest.fixture(autouse=True)
+def reset_device_id():
+    """channelIfValidDeviceResponse stores the detected unit in a module global; reset it so no test
+    inherits a device ID from an earlier one (e.g. Unit 16 = 0x1F from the detection tests)."""
+    Roland_GR50._device_id = DEFAULT_DEVICE_ID
+    yield
+    Roland_GR50._device_id = DEFAULT_DEVICE_ID
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +104,10 @@ def _make_tone_chunks(tone_no, tone_name="TestTone  ", data=None, chunk_size=Non
 
 
 def _make_tone_bulk(tone_no, tone_name="TestTone  ", data=None):
-    """Single 256-byte DT1 as produced by a GR-50 self-initiated bulk dump."""
+    """Single 256-byte DT1 covering a whole tone slot (246 data + 10 padding).
+
+    The real bulk dump in testData sends 246-byte tone DT1s; the adaptation also accepts this
+    full-slot form, so both are tested."""
     body = list(data) if data is not None else [0] * TONE_SIZE
     body[:TONE_NAME_LENGTH] = list(
         tone_name[:TONE_NAME_LENGTH].ljust(TONE_NAME_LENGTH).encode("ascii")
@@ -143,14 +159,69 @@ def test_tone_address_known_values(tone_no, expected):
     assert _tone_addr(tone_no) == expected
 
 
-def test_tone_63_chunk_addresses():
-    """Tone 63 chunk addresses are correctly computed and all bytes are valid 7-bit."""
-    chunk0 = _tone_addr(63)
-    chunk1 = _i2a(_a2i(chunk0) + 123)
-    assert chunk0 == [0x08, 0x7E, 0x00]
-    assert chunk1 == [0x08, 0x7E, 0x7B]   # offset 123 = 0x7B encoded in last byte
-    for byte in chunk0 + chunk1:
-        assert 0x00 <= byte <= 0x7F
+# ---------------------------------------------------------------------------
+# Tone handshake: each DT1 reply must produce exactly the next RQ1
+# ---------------------------------------------------------------------------
+
+def _rq1(address: list, size: int) -> list:
+    """Independent RQ1 builder (does not reuse the adaptation's encoding)."""
+    body = address + [(size >> 14) & 0x7F, (size >> 7) & 0x7F, size & 0x7F]
+    return [0xF0, ROLAND_ID, DEFAULT_DEVICE_ID, MODEL_ID, COMMAND_RQ1] + body + [_cs(body), 0xF7]
+
+
+def _reply_to(request: list, slot_data: list, slot_base: int) -> list:
+    """What a GR-50 sends back for an RQ1 into a tone slot holding slot_data."""
+    flat = _a2i(request[5:8])
+    size = _a2i(request[8:11])
+    offset = flat - slot_base
+    return _dt1(request[5:8], slot_data[offset:offset + size])
+
+
+@pytest.mark.parametrize("tone_no", [0, 1, 63])
+def test_tone_handshake_requests_each_chunk_in_order(tone_no):
+    """Walk one tone through the handshake: 4 RQ1s of 64/64/64/54 bytes, then a plain True."""
+    slot_base = _a2i(_tone_addr(tone_no))
+    data = [(tone_no * 7 + i) % 128 for i in range(TONE_SIZE)]
+    expected = [_rq1(_i2a(slot_base + off), min(64, TONE_SIZE - off)) for off in (0, 64, 128, 192)]
+
+    request = createProgramDumpRequest(0, PATCH_COUNT + tone_no)
+    sent, received = [request], []
+    while True:
+        reply = _reply_to(request, data, slot_base)
+        received.append(reply)
+        result = isPartOfSingleProgramDump(reply)
+        if result is True:
+            break
+        assert isinstance(result, tuple) and result[0] is True, f"unexpected handshake result {result!r}"
+        request = result[1]
+        sent.append(request)
+        assert len(sent) <= 4, "handshake asked for more than the 4 chunks of a tone"
+
+    assert sent == expected
+    buf = sum(received, [])
+    assert isSingleProgramDump(buf)
+    assert numberFromDump(buf) == PATCH_COUNT + tone_no
+
+
+def test_tone_63_requests_stay_inside_its_slot():
+    """The last tone's chunks address 0x08 7E xx / 0x08 7F xx and never spill past the slot."""
+    slot_base = _a2i(_tone_addr(63))
+    assert _tone_addr(63) == [0x08, 0x7E, 0x00]
+    data = [0] * TONE_SIZE
+    request = createProgramDumpRequest(0, PATCH_COUNT + 63)
+    while True:
+        flat, size = _a2i(request[5:8]), _a2i(request[8:11])
+        assert slot_base <= flat and flat + size <= slot_base + TONE_SIZE
+        assert all(0 <= b <= 0x7F for b in request[5:11])
+        result = isPartOfSingleProgramDump(_reply_to(request, data, slot_base))
+        if result is True:
+            break
+        request = result[1]
+
+
+def test_patch_reply_needs_no_follow_up_request():
+    """A 188-byte patch DT1 is complete: the handshake returns plain True, not a tuple."""
+    assert isPartOfSingleProgramDump(_make_patch(5)) is True
 
 
 # ---------------------------------------------------------------------------
@@ -477,52 +548,8 @@ def test_bank_boundary_patch_63_vs_tone_0():
 
 
 # ---------------------------------------------------------------------------
-# Hardware-constraint tests — model the conditions that cause real timeouts
-#
-# The MOTU MIDI Express XT resets its input port after ~252 inbound SysEx
-# transactions.  macOS can auto-detect the GR-50 on both the physical port
-# ("Port 7") AND the "All Cables" merged virtual port.  When that happens,
-# every DT1 response is delivered to KnobKraft twice, doubling the effective
-# transaction count seen by the MOTU hardware.
+# Robustness
 # ---------------------------------------------------------------------------
-
-MOTU_RESET_THRESHOLD = 252
-
-
-def test_transaction_count_single_port():
-    """Initial RQ1 count for the full tone bank stays well under the MOTU reset threshold.
-
-    createProgramDumpRequest sends only the first chunk per tone; subsequent
-    chunks are driven by the isPartOfSingleProgramDump handshake at runtime and
-    are not counted here.  64 initial transactions is far below the MOTU limit.
-    """
-    total = sum(
-        len(_split(createProgramDumpRequest(0, PATCH_COUNT + t)))
-        for t in range(TONE_COUNT)
-    )
-    assert total < MOTU_RESET_THRESHOLD, (
-        f"Full tone bank needs {total} initial transactions "
-        f"(MOTU limit: {MOTU_RESET_THRESHOLD})"
-    )
-
-
-def test_transaction_count_dual_port():
-    """Even if All Cables double-detection were still active, initial count stays safe.
-
-    FindSynthOnMidiNetwork.cpp now skips output-only ports so dual detection no
-    longer occurs in practice.  This test confirms the handshake approach keeps
-    the initial RQ1 count low enough that doubling it would still be safe.
-    """
-    total_requests = sum(
-        len(_split(createProgramDumpRequest(0, PATCH_COUNT + t)))
-        for t in range(TONE_COUNT)
-    )
-    effective = total_requests * 2
-    assert effective < MOTU_RESET_THRESHOLD, (
-        f"{total_requests} requests × 2 ports = {effective} effective transactions "
-        f"(MOTU limit: {MOTU_RESET_THRESHOLD})"
-    )
-
 
 def test_duplicate_dt1_chunks_reassemble():
     """Duplicate DT1 chunks must not corrupt reassembly."""
@@ -533,10 +560,66 @@ def test_duplicate_dt1_chunks_reassemble():
         assert numberFromDump(doubled) == PATCH_COUNT + tone_no
 
 
-def test_full_bank_import_simulation():
-    """Simulate a sequential KnobKraft import of all 64 User Tones."""
-    for tone_no in range(TONE_COUNT):
-        data = [(tone_no + i) % 128 for i in range(TONE_SIZE)]
-        buf = _tone_buf(tone_no, data=data)
-        assert isSingleProgramDump(buf), f"tone {tone_no} not recognised"
-        assert numberFromDump(buf) == PATCH_COUNT + tone_no
+def test_rejects_dt1_with_bad_checksum():
+    bad = _make_patch(0)
+    bad[-2] = (bad[-2] + 1) & 0x7F
+    assert not isPartOfSingleProgramDump(bad)
+    assert not isSingleProgramDump(bad)
+
+
+def test_tone_sent_to_patch_slot_stays_a_tone():
+    """The data decides the bank; the slot number only picks the position within it."""
+    moved = convertToProgramDump(0, _tone_buf(3, tone_name="KeepMe    "), 11)
+    assert numberFromDump(moved) == PATCH_COUNT + 11
+    assert nameFromDump(moved) == "KeepMe"
+
+
+def test_patch_sent_to_tone_slot_stays_a_patch():
+    moved = convertToProgramDump(0, _make_patch(3, "KeepMe"), PATCH_COUNT + 5)
+    assert numberFromDump(moved) == 5
+    assert nameFromDump(moved) == "KeepMe"
+
+
+# ---------------------------------------------------------------------------
+# Edit buffer request
+# ---------------------------------------------------------------------------
+
+def test_edit_buffer_request_reads_patch_temporary_area():
+    assert createEditBufferRequest(0) == _rq1(list(PATCH_TEMP_BASE), PATCH_SIZE)
+
+
+def test_part_of_edit_buffer_dump():
+    assert isPartOfEditBufferDump(_make_patch_eb())
+    assert not isPartOfEditBufferDump(_make_patch(0))
+    assert not isPartOfEditBufferDump(createEditBufferRequest(0))
+
+
+# ---------------------------------------------------------------------------
+# Real data: a bulk dump sent by a GR-50 (testData/Roland_GR50/GR50_bulk_dump.syx)
+# ---------------------------------------------------------------------------
+
+def _real_dump():
+    import os
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testData", "Roland_GR50", "GR50_bulk_dump.syx")
+    with open(path, "rb") as f:
+        return _split(list(f.read()))
+
+
+def test_real_bulk_dump_has_all_patches_and_tones_in_order():
+    messages = _real_dump()
+    assert len(messages) == PATCH_COUNT + TONE_COUNT
+    assert [numberFromDump(m) for m in messages] == list(range(PATCH_COUNT + TONE_COUNT))
+    assert all(isSingleProgramDump(m) for m in messages)
+
+
+@pytest.mark.parametrize("index, name", [(0, "Pedal Steel"), (63, "Soft Rhodes"), (64, "Akkordeon"), (127, "Xylophone")])
+def test_real_bulk_dump_names(index, name):
+    assert nameFromDump(_real_dump()[index]) == name
+
+
+def test_real_tones_survive_edit_buffer_round_trip():
+    """Real tone data must come back byte-identical after edit buffer and program conversions."""
+    for message in _real_dump()[PATCH_COUNT:PATCH_COUNT + 8]:
+        number = numberFromDump(message)
+        round_trip = convertToProgramDump(0, convertToEditBuffer(0, message), number)
+        assert round_trip == message

@@ -396,12 +396,16 @@ def convertToEditBuffer(channel: int, messages: List[int]) -> List[int]:
 
 
 def convertToProgramDump(channel: int, messages: List[int], program_number: int) -> List[int]:
-    if program_number >= PATCH_COUNT:
-        tone_no = (program_number - PATCH_COUNT) % TONE_COUNT
-        _, data = _extract_tone_data(messages)
-        return _build_message(_device_id, COMMAND_DT1, _tone_address(tone_no), data)
-    _, data = _extract_patch_data(messages)
-    return _build_message(_device_id, COMMAND_DT1, _patch_address(program_number), data)
+    # The kind of data decides the bank (a tone can only live in a tone slot, a patch in a patch
+    # slot); the program number only picks the slot within that bank.  Reading the bank from the
+    # program number instead would crash when a tone is sent to a patch slot or vice versa.
+    try:
+        _, data = _extract_patch_data(messages)
+        return _build_message(_device_id, COMMAND_DT1, _patch_address(program_number % PATCH_COUNT), data)
+    except ValueError:
+        pass
+    _, data = _extract_tone_data(messages)
+    return _build_message(_device_id, COMMAND_DT1, _tone_address(program_number % TONE_COUNT), data)
 
 
 def numberFromDump(messages: List[int]) -> int:
@@ -464,3 +468,89 @@ def blankedOut(messages: List[int]) -> List[int]:
 
 def calculateFingerprint(messages: List[int]) -> str:
     return hashlib.md5(bytearray(blankedOut(messages))).hexdigest()
+
+
+def make_test_data():
+    """Test data for the shared adaptation test suite (test_adaptations.py).
+
+    Fixture: a real bulk dump sent by a GR-50 (64 patches of 188 bytes, 64 user tones of 246 bytes).
+    The mock device below answers RQ1 requests from that memory, so the wire-download tests drive
+    the real tone handshake (first RQ1 from createProgramDumpRequest, follow-ups from
+    isPartOfSingleProgramDump) and check every request against an independently computed list.
+    """
+    import os
+    import knobkraft
+    import testing
+
+    fixture = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testData", "Roland_GR50", "GR50_bulk_dump.syx")
+    dump = knobkraft.load_sysex(fixture)
+    patches, tones = dump[:PATCH_COUNT], dump[PATCH_COUNT:]
+
+    # Independent re-implementation of the request format, so the expected wire traffic doesn't
+    # reuse the adaptation's own encoding helpers.
+    def rq1(flat_address: int, size: int) -> List[int]:
+        body = [(flat_address >> 14) & 0x7F, (flat_address >> 7) & 0x7F, flat_address & 0x7F,
+                (size >> 14) & 0x7F, (size >> 7) & 0x7F, size & 0x7F]
+        return [0xF0, 0x41, 0x10, 0x16, 0x11] + body + [(-sum(body)) & 0x7F, 0xF7]
+
+    def expected_patch_requests() -> List[List[int]]:
+        return [rq1((0x51 << 14) + p * 188, 188) for p in range(64)]
+
+    def expected_tone_requests() -> List[List[int]]:
+        # Each tone sits in a 256-byte slot; 246 bytes are read as 64 + 64 + 64 + 54
+        return [rq1((0x08 << 14) + t * 256 + offset, min(64, 246 - offset))
+                for t in range(64) for offset in (0, 64, 128, 192)]
+
+    class GR50MemoryMock:
+        """Answers each RQ1 with one DT1 read from the dumped memory, like the real GR-50."""
+        def __init__(self, messages: List[List[int]]):
+            self.memory = {}
+            for message in messages:
+                flat = (message[5] << 14) | (message[6] << 7) | message[7]
+                for i, value in enumerate(message[8:-2]):
+                    self.memory[flat + i] = value
+
+        def respond(self, message: List[int]) -> List[List[int]]:
+            assert message[:5] == [0xF0, 0x41, 0x10, 0x16, 0x11], f"Not a GR-50 RQ1: {message}"
+            flat = (message[5] << 14) | (message[6] << 7) | message[7]
+            size = (message[8] << 14) | (message[9] << 7) | message[10]
+            missing = [flat + i for i in range(size) if flat + i not in self.memory]
+            assert not missing, f"RQ1 reads outside the dumped memory at {missing[0]:#x}"
+            data = [self.memory[flat + i] for i in range(size)]
+            body = message[5:8] + data
+            return [[0xF0, 0x41, 0x10, 0x16, 0x12] + body + [(-sum(body)) & 0x7F, 0xF7]]
+
+    def programs(_) -> List:
+        return [
+            testing.ProgramTestData(patches[0], name="Pedal Steel", number=0, friendly_number="I-11"),
+            testing.ProgramTestData(patches[1], name="Stereo Acoustic", number=1, friendly_number="I-12"),
+            testing.ProgramTestData(patches[63], name="Soft Rhodes", number=63, friendly_number="I-88"),
+            # Tones must stay in the tone bank when converted, so give them a tone slot as target
+            testing.ProgramTestData(tones[0], name="Akkordeon", number=64, friendly_number="i01", target_no=75),
+            testing.ProgramTestData(tones[1], name="Ana-Dig it", number=65, friendly_number="i02", target_no=75),
+            testing.ProgramTestData(tones[63], name="Xylophone", number=127, friendly_number="i64", target_no=75),
+        ]
+
+    def edit_buffers(_) -> List:
+        return [
+            testing.ProgramTestData(convertToEditBuffer(0, patches[0]), name="Pedal Steel"),
+            testing.ProgramTestData(convertToEditBuffer(0, tones[0]), name="Akkordeon", target_no=75),
+        ]
+
+    return testing.TestData(
+        sysex=fixture,
+        program_generator=programs,
+        edit_buffer_generator=edit_buffers,
+        program_dump_request=(0, 64, rq1(0x08 << 14, 64)),
+        device_detect_call="F0 41 10 16 11 52 00 00 00 00 13 1B F7",
+        # Real System Setup reply from a GR-50 set to Unit 1 (device ID 0x10)
+        device_detect_reply=("F0 41 10 16 12 52 00 00 40 0F 00 0C 01 01 01 7F 01 00 03 00 04 07 07 07 07 07 07 1F F7", 0),
+        expected_patch_count=128,
+        mock_device_factory=lambda test_data, adaptation: GR50MemoryMock(dump),
+        wire_download_bank=1,
+        expected_wire_patch_count=64,
+        expected_sent_messages=lambda test_data, adaptation: expected_tone_requests(),
+        wire_download_banks=[0, 1],
+        expected_multi_bank_patch_count=128,
+        expected_multi_bank_sent_messages=lambda test_data, adaptation: expected_patch_requests() + expected_tone_requests(),
+    )
