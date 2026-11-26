@@ -623,3 +623,70 @@ def test_real_tones_survive_edit_buffer_round_trip():
         number = numberFromDump(message)
         round_trip = convertToProgramDump(0, convertToEditBuffer(0, message), number)
         assert round_trip == message
+
+
+# ---------------------------------------------------------------------------
+# Parameter grid (getPatchParameters)
+# ---------------------------------------------------------------------------
+
+def _by_id(parameters):
+    return {p["id"]: p for p in parameters}
+
+
+def test_patch_parameters_cover_common_strings_and_external():
+    parameters = getPatchParameters(_real_dump()[0])
+    # 4 common + 6 strings x (2 mode + 2 x 8 tone) + 2 branches x (4 general + 6 x 3 per string)
+    assert len(parameters) == 4 + 6 * 18 + 2 * 22
+    groups = list(dict.fromkeys(p["group"] for p in parameters))
+    assert groups == ["Common"] + [f"String {s}" for s in range(1, 7)] + ["External A", "External B"]
+
+
+def test_tone_parameters_cover_common_and_four_partials():
+    parameters = getPatchParameters(_real_dump()[PATCH_COUNT])
+    assert len(parameters) == 4 + 4 * 58
+    groups = list(dict.fromkeys(p["group"] for p in parameters))
+    assert groups == ["Common", "Partial 1", "Partial 2", "Partial 3", "Partial 4"]
+
+
+def test_parameters_have_unique_ids_and_the_keys_the_host_needs():
+    for message in _real_dump():
+        parameters = getPatchParameters(message)
+        assert len({p["id"] for p in parameters}) == len(parameters)
+        for p in parameters:
+            assert p["name"] and isinstance(p["value"], int) and isinstance(p["text"], str)
+
+
+def test_patch_parameter_values_decode_from_the_right_bytes():
+    patch = _by_id(getPatchParameters(_real_dump()[0]))  # Pedal Steel
+    assert patch["common.reverb_type"]["value"] == 3 and patch["common.reverb_type"]["text"] == "4"
+    assert patch["string1.tone1.tone_group"]["text"] == "a"
+    assert patch["string1.tone1.tone_number"]["text"] == "64"
+    assert patch["string1.tone1.panpot"]["text"] == "C"
+    assert patch["string1.tone1.key_shift"]["text"] == "0"
+    assert patch["string1.tone2.tone_group"]["text"] == "i/c"
+    assert patch["externalA.bender_range"]["value"] == 12
+
+
+def test_tone_parameter_values_decode_from_the_right_bytes():
+    tone = _by_id(getPatchParameters(_real_dump()[PATCH_COUNT]))  # Akkordeon
+    assert tone["common.structure_1_2"]["text"] == "6"
+    assert tone["common.partial_mute"]["text"] == "1 1 1 1"
+    assert tone["partial1.wg_pitch_fine"]["text"] == "+2"
+    assert tone["partial1.wg_pcm_wave_number"]["text"] == "42"
+    assert tone["partial1.tvf_bias_point"]["text"] == "D#1"
+
+
+def test_real_values_stay_inside_their_ranges():
+    for message in _real_dump():
+        for p in getPatchParameters(message):
+            assert p["min"] <= p["value"] <= p["max"], p["id"]
+
+
+def test_parameters_of_edit_buffer_match_program():
+    message = _real_dump()[PATCH_COUNT + 1]
+    assert getPatchParameters(convertToEditBuffer(0, message)) == getPatchParameters(message)
+
+
+def test_no_parameters_for_unrelated_data():
+    assert getPatchParameters([]) == []
+    assert getPatchParameters([0xF0, 0x43, 0x00, 0xF7]) == []

@@ -727,6 +727,45 @@ counts differ, JUCE compares the complete texts. Additional representations can
 show decimal bytes, parameter values, layers, or synth-specific offset reports. No
 generic mapping between packed and unpacked byte indices is inferred.
 
+## Parameter grid
+
+The optional `getPatchParameters(message)` callback decodes a patch into named
+parameters. The Current Patch tab shows them as a labelled grid, grouped into
+sections, and opens it automatically for patches that have parameters. The input is
+the complete stored patch data, as for `getClearText`.
+
+Return a list of dicts, one per parameter, in the order they should appear:
+
+| Key | Required | Meaning |
+| --- | --- | --- |
+| `name` | yes | Label shown above the value |
+| `value` | yes | Raw integer value as stored in the patch |
+| `id` | no | Stable identifier, unique within the patch; defaults to `name` |
+| `group` | no | Section heading; parameters with the same group are shown together |
+| `text` | no | Display text, for example `"+12"`, `"on"` or `"C#3"`; defaults to `value` |
+| `min`, `max` | no | Value range, shown in the cell's tooltip |
+
+```python
+def getPatchParameters(message):
+    if not isEditBufferDump(message):
+        return []
+    data = message[8:-2]  # Use your synth's framing here.
+    return [
+        {"id": "cutoff", "name": "Cutoff", "group": "Filter", "value": data[10], "min": 0, "max": 127},
+        {"id": "keytrack", "name": "Key track", "group": "Filter", "value": data[11],
+         "text": "on" if data[11] else "off"},
+    ]
+```
+
+For a complete implementation with several patch types, see `getPatchParameters` in
+`Roland_GR50.py`. Ids are not shown, but keep them stable: later editing features will
+use them to address parameters.
+
+Return `[]` for patch types you cannot decode. Each `id` must be unique and each `name`
+nonempty; if not, or if the callback raises, the error is logged and the grid is
+hidden. Native C++ synths that define parameters get the same grid without this
+callback.
+
 ## Patch selection and send notifications
 
 Host API version 3 adds two optional hooks:

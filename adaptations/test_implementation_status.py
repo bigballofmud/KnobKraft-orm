@@ -39,6 +39,7 @@ column_names = ["Synth name",
                 "setLayerName",
                 "setupHelp",
                 "getClearText",
+                "getPatchParameters",
                 ]
 table_result = ["Synth name" if i == 0 else str(i + 1) for i in range(len(column_names))]
 yes_char = "Y"
@@ -134,6 +135,7 @@ def test_implementation_status(adaptation, md_file):
               check(adaptation, "setLayerName"),
               check(adaptation, "setupHelp"),
               check(adaptation, "getClearText"),
+              check(adaptation, "getPatchParameters"),
               ]
     table_result.extend(my_row)
     total_columns = len(my_row)

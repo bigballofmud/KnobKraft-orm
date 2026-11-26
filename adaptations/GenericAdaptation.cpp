@@ -85,6 +85,7 @@ namespace knobkraft {
 		* kFriendlyProgramName = "friendlyProgramName",
 		* kSetupHelp = "setupHelp",
 		* kGetClearText = "getClearText",
+		* kGetPatchParameters = "getPatchParameters",
 		* kGetStoredTags = "storedTags",
 		* kIndicateBankDownloadMethod= "bankDownloadMethodOverride",
 		* kOnPatchSelected = "onPatchSelected",
@@ -132,6 +133,7 @@ namespace knobkraft {
 		kFriendlyProgramName,
 		kSetupHelp,
 		kGetClearText,
+		kGetPatchParameters,
 		kGetStoredTags,
 		kMessageTimings,
 		kOnPatchSelected,
@@ -722,6 +724,58 @@ namespace knobkraft {
 			// In particular, consume Python errors here so a faulty optional view
 			// cannot prevent the raw view or subsequent adaptation calls from working.
 			logAdaptationError(kGetClearText, ex);
+		}
+		return {};
+	}
+
+	midikraft::PatchParameters GenericAdaptation::getPatchParameters(midikraft::DataFile const& patch) const
+	{
+		py::gil_scoped_acquire acquire;
+		if (!pythonModuleHasFunction(kGetPatchParameters)) return {};
+		try {
+			// Pass a copy, just like the other patch callbacks. Never change stored data.
+			std::vector<int> data(patch.data().begin(), patch.data().end());
+			py::object result = callMethod(kGetPatchParameters, data);
+			if (result.is_none()) return {};
+			if (!py::isinstance<py::sequence>(result) || py::isinstance<py::str>(result)) {
+				throw std::runtime_error("getPatchParameters must return a list of dicts");
+			}
+			auto asText = [](py::handle value) { return py::str(value).cast<std::string>(); };
+			auto optionalInt = [](py::dict const& dict, const char* key) -> std::optional<int> {
+				if (!dict.contains(key) || dict[key].is_none()) return std::nullopt;
+				return dict[key].cast<int>();
+			};
+			midikraft::PatchParameters parameters;
+			std::set<std::string> ids;
+			for (auto item : py::reinterpret_borrow<py::sequence>(result)) {
+				if (!py::isinstance<py::dict>(item)) {
+					throw std::runtime_error("getPatchParameters entries must be dicts");
+				}
+				auto dict = py::reinterpret_borrow<py::dict>(item);
+				if (!dict.contains("name") || !dict.contains("value")) {
+					throw std::runtime_error("getPatchParameters entries need a 'name' and a 'value'");
+				}
+				midikraft::PatchParameter parameter;
+				parameter.name = asText(dict["name"]);
+				parameter.value = dict["value"].cast<int>();
+				parameter.id = dict.contains("id") ? asText(dict["id"]) : parameter.name;
+				parameter.group = dict.contains("group") && !dict["group"].is_none() ? asText(dict["group"]) : "";
+				parameter.minValue = optionalInt(dict, "min");
+				parameter.maxValue = optionalInt(dict, "max");
+				parameter.text = dict.contains("text") && !dict["text"].is_none() ? asText(dict["text"]) : std::to_string(parameter.value);
+				if (parameter.name.empty() || parameter.id.empty()) {
+					throw std::runtime_error("getPatchParameters names and ids must be nonempty");
+				}
+				if (!ids.insert(parameter.id).second) {
+					throw std::runtime_error(fmt::format("getPatchParameters returned the id '{}' twice", parameter.id));
+				}
+				parameters.push_back(std::move(parameter));
+			}
+			return parameters;
+		}
+		catch (std::exception& ex) {
+			// Consume Python errors here, so a faulty optional callback only hides the parameter grid
+			logAdaptationError(kGetPatchParameters, ex);
 		}
 		return {};
 	}

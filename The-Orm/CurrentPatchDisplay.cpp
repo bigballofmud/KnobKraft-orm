@@ -61,14 +61,14 @@ void MetaDataArea::resized()
 	auto desiredBounds = categories_.determineSubAreaForButtonLayout(this, Rectangle<int>(0, 0, area.getWidth(), 10000));
 	categories_.setBounds(area.removeFromTop((int) desiredBounds.getHeight())); 
 	//categories_.setBounds(area.withTrimmedRight(LAYOUT_INSET_NORMAL)); // Leave room for the scrollbar on the right
-	patchAsText_.setBounds(area.withTrimmedTop(2 * LAYOUT_INSET_NORMAL).withHeight((int) patchAsText_.desiredHeight()));
+	patchAsText_.setBounds(area.withTrimmedTop(2 * LAYOUT_INSET_NORMAL).withHeight((int) patchAsText_.desiredHeight(area.getWidth())));
 }
 
 int MetaDataArea::getDesiredHeight(int width) 
 {
 	// Given the width, determine the required height of the flex box button layout
 	auto desiredBounds = categories_.determineSubAreaForButtonLayout(this, Rectangle<int>(0, 0, width, 10000));
-	return static_cast<int>(desiredBounds.getHeight() + patchAsText_.desiredHeight() + 2 * LAYOUT_INSET_NORMAL);
+	return static_cast<int>(desiredBounds.getHeight() + patchAsText_.desiredHeight(width) + 2 * LAYOUT_INSET_NORMAL);
 }
 
 CurrentPatchDisplay::CurrentPatchDisplay(midikraft::PatchDatabase &database, std::vector<CategoryButtons::Category> categories, std::function<void(std::shared_ptr<midikraft::PatchHolder>)> favoriteHandler) 

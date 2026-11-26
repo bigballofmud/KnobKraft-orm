@@ -83,6 +83,7 @@ set(SOURCES
 	PatchPerSynthList.cpp PatchPerSynthList.h
 	PatchSearchComponent.cpp PatchSearchComponent.h
 	PatchTextBox.cpp PatchTextBox.h
+	PatchParameterGrid.cpp PatchParameterGrid.h PatchParameterViews.h
 	PatchView.cpp PatchView.h
 	PatchSelectionEvents.h
 	ReceiveManualDumpWindow.cpp ReceiveManualDumpWindow.h

@@ -470,6 +470,221 @@ def calculateFingerprint(messages: List[int]) -> str:
     return hashlib.md5(bytearray(blankedOut(messages))).hexdigest()
 
 
+# ---------------------------------------------------------------------------
+# Parameter grid
+#
+# Layouts follow the parameter tables in the Owner's Manual (see gr50_params.py at the repository
+# root). Offsets are plain byte offsets into the 188-byte patch or the 246-byte tone. Values whose
+# meaning the manual leaves unclear are shown as raw numbers rather than guessed.
+# ---------------------------------------------------------------------------
+
+_NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+_ACRONYMS = {"wg": "WG", "tvf": "TVF", "tva": "TVA", "lfo": "LFO", "pcm": "PCM", "midi": "MIDI"}
+
+
+def _raw(v: int) -> str:
+    return str(v)
+
+
+def _plus_one(v: int) -> str:
+    return str(v + 1)
+
+
+def _signed(center: int):
+    return lambda v: f"{v - center:+d}" if v != center else "0"
+
+
+def _labels(*names: str):
+    return lambda v: names[v] if 0 <= v < len(names) else str(v)
+
+
+def _pan(v: int) -> str:
+    # 0..14 with 7 in the middle
+    return "C" if v == 7 else (f"L{7 - v}" if v < 7 else f"R{v - 7}")
+
+
+def _note(v: int) -> str:
+    return f"{_NOTE_NAMES[v % 12]}{v // 12 - 1}"
+
+
+def _midi_channel(v: int) -> str:
+    return "Off" if v == 16 else str(v + 1)
+
+
+def _partial_bits(v: int) -> str:
+    return " ".join("1" if v & (1 << bit) else "0" for bit in range(4))
+
+
+_ON_OFF = _labels("off", "on")
+
+# (offset, id, max, formatter)
+_PATCH_COMMON = [
+    (0x10, "reverb_type", 7, _plus_one),
+    (0x11, "reverb_time", 7, _raw),
+    (0x12, "reverb_level", 7, _raw),
+    (0x13, "velocity_curve", 3, _plus_one),
+]
+_PATCH_MODE_GROUP = [
+    (0x00, "tone_mode", 5, _labels("1st", "2nd", "single", "dual", "velo switch", "mix")),
+    (0x01, "tone_mode_sensitivity", 3, _plus_one),
+]
+_PATCH_TONE_GROUP = [
+    (0x00, "tone_group", 3, _labels("a", "b", "i/c", "l")),
+    (0x01, "tone_number", 63, _plus_one),
+    (0x02, "output_level", 100, _raw),
+    (0x03, "panpot", 14, _pan),
+    (0x04, "key_shift", 48, _signed(24)),
+    (0x05, "fine_tune", 100, _signed(50)),
+    (0x06, "chromatic_switch", 1, _ON_OFF),
+    (0x08, "reverb_switch", 1, _ON_OFF),
+]
+_PATCH_EXTERNAL_GENERAL = [
+    (0x00, "midi_channel", 16, _midi_channel),
+    (0x01, "midi_mode", 1, _labels("poly", "mono")),
+    (0x02, "output_level", 100, _raw),
+    (0x03, "bender_range", 24, _raw),
+]
+_PATCH_EXTERNAL_STRING = [
+    (0x00, "program_change", 127, _plus_one),
+    (0x01, "transpose", 48, _signed(24)),
+    (0x02, "string_select", 1, _ON_OFF),
+]
+_PATCH_INTERNAL_OFFSET = 0x14       # 6 strings x 20 bytes
+_PATCH_EXTERNAL_OFFSET = 0x8C       # 2 branches x 24 bytes
+
+_TONE_COMMON = [
+    (0x0A, "structure_1_2", 12, _plus_one),
+    (0x0B, "structure_3_4", 12, _plus_one),
+    (0x0C, "partial_mute", 15, _partial_bits),
+    (0x0D, "envelope_mode", 1, _labels("normal", "no sustain")),
+]
+_TONE_PARTIAL = [
+    (0x00, "wg_pitch_coarse", 96, _raw),     # scale unclear: real tones cluster at 24, 36 and 48
+    (0x01, "wg_pitch_fine", 100, _signed(50)),
+    (0x02, "wg_pitch_key_follow", 16, _raw),
+    (0x03, "wg_pitch_bender_switch", 1, _ON_OFF),
+    (0x04, "wg_pcm_bank_wave_form", 3, _raw),
+    (0x05, "wg_pcm_wave_number", 127, _plus_one),
+    (0x06, "wg_pulse_width", 100, _raw),
+    (0x07, "wg_pulse_width_velo_sens", 14, _signed(7)),
+    (0x08, "pitch_env_depth", 10, _raw),
+    (0x09, "pitch_env_velocity", 100, _raw),
+    (0x0A, "pitch_env_time_key_follow", 4, _raw),
+    (0x0B, "pitch_env_time_1", 100, _raw),
+    (0x0C, "pitch_env_time_2", 100, _raw),
+    (0x0D, "pitch_env_time_3", 100, _raw),
+    (0x0E, "pitch_env_time_4", 100, _raw),
+    (0x0F, "pitch_env_level_0", 100, _signed(50)),
+    (0x10, "pitch_env_level_1", 100, _signed(50)),
+    (0x11, "pitch_env_level_2", 100, _signed(50)),
+    (0x12, "pitch_env_sus_level", 100, _signed(50)),
+    (0x13, "pitch_env_end_level", 100, _signed(50)),
+    (0x14, "pitch_lfo_rate", 100, _raw),
+    (0x15, "pitch_lfo_depth", 100, _raw),
+    (0x16, "pitch_lfo_mod_sens", 100, _raw),
+    (0x17, "tvf_cutoff", 100, _raw),
+    (0x18, "tvf_resonance", 30, _raw),
+    (0x19, "tvf_key_follow", 14, _raw),
+    (0x1A, "tvf_bias_point", 127, _note),
+    (0x1B, "tvf_bias_level", 14, _signed(7)),  # real tones use 0..14, centred on 7
+    (0x1C, "tvf_env_depth", 100, _raw),
+    (0x1D, "tvf_env_velocity", 100, _raw),
+    (0x1E, "tvf_env_depth_key_follow", 4, _raw),
+    (0x1F, "tvf_env_time_key_follow", 4, _raw),
+    (0x20, "tvf_env_time_1", 100, _raw),
+    (0x21, "tvf_env_time_2", 100, _raw),
+    (0x22, "tvf_env_time_3", 100, _raw),
+    (0x23, "tvf_env_time_4", 100, _raw),
+    (0x24, "tvf_env_time_5", 100, _raw),
+    (0x25, "tvf_env_level_1", 100, _raw),
+    (0x26, "tvf_env_level_2", 100, _raw),
+    (0x27, "tvf_env_level_3", 100, _raw),
+    (0x28, "tvf_env_sus_level", 100, _raw),
+    (0x29, "tva_level", 100, _raw),
+    (0x2A, "tva_velocity", 100, _raw),
+    (0x2B, "tva_bias_point_1", 127, _note),
+    (0x2C, "tva_bias_level_1", 12, _raw),    # manual's range and display disagree
+    (0x2D, "tva_bias_point_2", 127, _note),
+    (0x2E, "tva_bias_level_2", 12, _raw),    # manual's range and display disagree
+    (0x2F, "tva_env_time_key_follow", 4, _raw),
+    (0x30, "tva_env_time_1_velo", 4, _raw),
+    (0x31, "tva_env_time_1", 100, _raw),
+    (0x32, "tva_env_time_2", 100, _raw),
+    (0x33, "tva_env_time_3", 100, _raw),
+    (0x34, "tva_env_time_4", 100, _raw),
+    (0x35, "tva_env_time_5", 100, _raw),
+    (0x36, "tva_env_level_1", 100, _raw),
+    (0x37, "tva_env_level_2", 100, _raw),
+    (0x38, "tva_env_level_3", 100, _raw),
+    (0x39, "tva_env_sus_level", 100, _raw),
+]
+_TONE_PARTIAL_OFFSET = 0x0E         # 4 partials x 58 bytes
+_TONE_PARTIAL_SIZE = 58
+
+
+def _label(parameter_id: str) -> str:
+    words = [_ACRONYMS.get(word, word) for word in parameter_id.split("_")]
+    text = " ".join(words).replace("structure 1 2", "structure 1/2").replace("structure 3 4", "structure 3/4")
+    return text[0].upper() + text[1:]
+
+
+def _decode(data: List[int], base: int, table, group: str, id_prefix: str, name_prefix: str = "") -> List[Dict]:
+    result = []
+    for offset, parameter_id, max_value, formatter in table:
+        value = data[base + offset]
+        result.append({
+            "id": f"{id_prefix}{parameter_id}",
+            "name": f"{name_prefix}{_label(parameter_id)}",
+            "group": group,
+            "value": value,
+            "min": 0,
+            "max": max_value,
+            "text": formatter(value),
+        })
+    return result
+
+
+def _patch_parameters(data: List[int]) -> List[Dict]:
+    result = _decode(data, 0, _PATCH_COMMON, "Common", "common.")
+    for string in range(6):
+        base = _PATCH_INTERNAL_OFFSET + string * 20
+        group = f"String {string + 1}"
+        prefix = f"string{string + 1}."
+        result += _decode(data, base, _PATCH_MODE_GROUP, group, prefix)
+        result += _decode(data, base + 0x02, _PATCH_TONE_GROUP, group, prefix + "tone1.", "1st ")
+        result += _decode(data, base + 0x0B, _PATCH_TONE_GROUP, group, prefix + "tone2.", "2nd ")
+    for branch_index, branch in enumerate("AB"):
+        base = _PATCH_EXTERNAL_OFFSET + branch_index * 24
+        group = f"External {branch}"
+        prefix = f"external{branch}."
+        result += _decode(data, base, _PATCH_EXTERNAL_GENERAL, group, prefix)
+        for string in range(6):
+            result += _decode(data, base + 0x06 + string * 3, _PATCH_EXTERNAL_STRING, group,
+                              f"{prefix}string{string + 1}.", f"String {string + 1} ")
+    return result
+
+
+def _tone_parameters(data: List[int]) -> List[Dict]:
+    result = _decode(data, 0, _TONE_COMMON, "Common", "common.")
+    for partial in range(4):
+        base = _TONE_PARTIAL_OFFSET + partial * _TONE_PARTIAL_SIZE
+        result += _decode(data, base, _TONE_PARTIAL, f"Partial {partial + 1}", f"partial{partial + 1}.")
+    return result
+
+
+def getPatchParameters(messages: List[int]) -> List[Dict]:
+    try:
+        _, data = _extract_patch_data(messages)
+        return _patch_parameters(data)
+    except ValueError:
+        pass
+    try:
+        _, data = _extract_tone_data(messages)
+        return _tone_parameters(data)
+    except ValueError:
+        return []
+
+
 def make_test_data():
     """Test data for the shared adaptation test suite (test_adaptations.py).
 

@@ -10,6 +10,12 @@
 #include "DetailedParametersCapability.h"
 #include "LayeredPatchCapability.h"
 #include "PatchTextViews.h"
+#include "PatchParameterViews.h"
+
+namespace {
+	constexpr int kGridId = 1000; // Custom text views use ids from 3 upwards
+	constexpr int kTopRowHeight = 20;
+}
 
 #include <fmt/format.h>
 
@@ -28,17 +34,21 @@ PatchTextBox::PatchTextBox(std::function<void()> forceResize, bool showParams /*
 	hexBased_.setButtonText("Hex Dump");
 	hexBased_.setClickingTogglesState(true);
 	hexBased_.onClick = [this]() {
-		textBox_->setVisible(hexBased_.getToggleState());
-		viewSelector_.setVisible(hexBased_.getToggleState() && viewSelector_.getNumItems() > 1);
+		toggleTouched_ = true;
+		updateContentVisibility();
 		if (forceResize_) forceResize_();
 	};
+
+	addChildComponent(grid_);
 
 	addChildComponent(viewSelector_);
 	viewSelector_.setVisible(showParams_);
 	viewSelector_.addItem("Raw hex", 1);
 	viewSelector_.setSelectedId(1, dontSendNotification);
 	viewSelector_.onChange = [this]() {
+		preferGrid_ = gridSelected();
 		refreshText();
+		updateContentVisibility();
 		if (forceResize_) forceResize_();
 	};
 }
@@ -47,11 +57,15 @@ void PatchTextBox::fillTextBox(std::shared_ptr<midikraft::PatchHolder> patch)
 {
 	auto previousId = viewSelector_.getSelectedId();
 	std::string previousName;
-	if (previousId >= 3) previousName = customViews_.at(static_cast<size_t>(previousId - 3)).first;
+	if (previousId >= 3 && previousId != kGridId) previousName = customViews_.at(static_cast<size_t>(previousId - 3)).first;
 	bool firstPatch = !patch_;
 	patch_ = patch;
 	customViews_ = patch ? patch_text::viewsFor(*patch) : midikraft::PatchTextViews{};
 	viewSelector_.clear(dontSendNotification);
+	auto parameters = patch ? patch_parameters::parametersFor(*patch) : midikraft::PatchParameters{};
+	bool hasGrid = !parameters.empty();
+	grid_.setParameters(std::move(parameters));
+	if (hasGrid) viewSelector_.addItem("Parameter grid", kGridId);
 	viewSelector_.addItem("Raw hex", 1);
 	bool hasParams = patch && midikraft::Capability::hasCapability<midikraft::DetailedParametersCapability>(patch->patch());
 	if (hasParams) viewSelector_.addItem("Parameter values", 2);
@@ -61,17 +75,32 @@ void PatchTextBox::fillTextBox(std::shared_ptr<midikraft::PatchHolder> patch)
 		viewSelector_.addItem(String::fromUTF8(customViews_[i].first.c_str()), id);
 		if (previousId >= 3 && customViews_[i].first == previousName) selectedId = id;
 	}
+	if (hasGrid && (preferGrid_ || previousId == kGridId)) selectedId = kGridId;
 	viewSelector_.setSelectedId(selectedId, dontSendNotification);
-	viewSelector_.setVisible(showParams_ || (hexBased_.getToggleState() && viewSelector_.getNumItems() > 1));
-	hexBased_.setButtonText(viewSelector_.getNumItems() > 1 ? "Patch text" : "Hex Dump");
+	// Open the panel for patches with parameters, unless the user has opened or closed it themselves
+	if (!showParams_ && !toggleTouched_) hexBased_.setToggleState(hasGrid, dontSendNotification);
+	hexBased_.setButtonText(hasGrid ? "Parameters" : (viewSelector_.getNumItems() > 1 ? "Patch text" : "Hex Dump"));
 	refreshText();
+	updateContentVisibility();
 	if (forceResize_) forceResize_();
+}
+
+bool PatchTextBox::gridSelected() const {
+	return viewSelector_.getSelectedId() == kGridId;
+}
+
+void PatchTextBox::updateContentVisibility() {
+	bool open = showParams_ || hexBased_.getToggleState();
+	textBox_->setVisible(open && !gridSelected());
+	grid_.setVisible(open && gridSelected());
+	viewSelector_.setVisible(showParams_ || (open && viewSelector_.getNumItems() > 1));
 }
 
 void PatchTextBox::refreshText() {
 	String text;
 	auto selectedId = viewSelector_.getSelectedId();
-	if (selectedId == 1) text = makeHexDocument(patch_);
+	if (selectedId == kGridId) text = {};
+	else if (selectedId == 1) text = makeHexDocument(patch_);
 	else if (selectedId == 2) text = makeTextDocument(patch_);
 	else text = String::fromUTF8(customViews_.at(static_cast<size_t>(selectedId - 3)).second.c_str());
 	// No reflow, trimming, or newline normalization of adaptation-provided text.
@@ -82,11 +111,12 @@ void PatchTextBox::resized()
 {
 	auto area = getLocalBounds();
 
-	auto topRow = area.removeFromTop(20);
+	auto topRow = area.removeFromTop(kTopRowHeight);
 	if (!showParams_) hexBased_.setBounds(topRow.removeFromLeft(100));
 	viewSelector_.setBounds(topRow);
 
 	textBox_->setBounds(area);
+	grid_.setBounds(area.withTrimmedTop(4));
 
 	if (viewSelector_.getSelectedId() == 1 && lastLayoutedWidth_.has_value() && *lastLayoutedWidth_ != area.getWidth() && patch_) {
 		refreshText();
@@ -131,7 +161,11 @@ String PatchTextBox::makeHexDocument(std::shared_ptr<midikraft::PatchHolder> pat
 	return result;
 }
 
-float PatchTextBox::desiredHeight() const {
+float PatchTextBox::desiredHeight(int width) const {
+	if (width < 0) width = getWidth();
+	if (grid_.isVisible() || ((showParams_ || hexBased_.getToggleState()) && gridSelected())) {
+		return static_cast<float>(kTopRowHeight + 4 + grid_.desiredHeight(width));
+	}
 	auto fontUsed = textBox_->getFont();
 	auto linesNeeded = (showParams_ || hexBased_.getToggleState()) ? document_->getNumLines() : 0;
 	return fontUsed.getHeight() * (linesNeeded + 4);
