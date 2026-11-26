@@ -58,6 +58,12 @@ bool PatchEditSession::isDirty() const
 	return original_ && current_ && original_->patch() && current_->data() != original_->patch()->data();
 }
 
+bool PatchEditSession::wouldDiscardEdits(std::shared_ptr<midikraft::DataFile> const& next) const
+{
+	if (!isDirty()) return false;
+	return !next || next->data() != current_->data();
+}
+
 midikraft::PatchParameters PatchEditSession::parameters() const
 {
 	if (!original_ || !current_) return {};

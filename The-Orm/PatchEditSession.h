@@ -19,6 +19,8 @@ public:
 
 	bool canEdit() const;
 	bool isDirty() const;
+	// True when showing next would lose edits: there are edits, and next isn't the edited sound itself (e.g. its saved copy)
+	bool wouldDiscardEdits(std::shared_ptr<midikraft::DataFile> const& next) const;
 
 	midikraft::PatchParameters parameters() const;
 	std::set<std::string> changedIds() const;

@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT
 #include "doctest/doctest.h"
 
+#include "The-Orm/PatchEditSession.h"
 #include "The-Orm/PatchParameterViews.h"
 
 #include "KawaiK3.h"
@@ -109,4 +110,35 @@ TEST_CASE("Unknown ids and out-of-range values are refused") {
 	REQUIRE(first != parameters.end());
 	CHECK_FALSE(patch_parameters::applyNativeValue(synth, patch, MidiProgramNumber::fromZeroBase(0), "no such parameter", 1));
 	CHECK_FALSE(patch_parameters::applyNativeValue(synth, patch, MidiProgramNumber::fromZeroBase(0), first->id, *first->maxValue + 1));
+}
+
+TEST_CASE("Switching patches warns only when edits would be lost") {
+	auto synth = std::make_shared<midikraft::Matrix1000>();
+	auto source = std::make_shared<midikraft::FromFileSource>("session.syx", "/tmp/session.syx", MidiProgramNumber::fromZeroBase(0));
+	auto original = std::make_shared<midikraft::PatchHolder>(synth, source, legalPatch(synth, 134));
+	auto other = legalPatch(synth, 134);
+
+	PatchEditSession session;
+	session.start(original);
+	REQUIRE(session.canEdit());
+	CHECK_FALSE(session.wouldDiscardEdits(other)); // Nothing edited yet
+
+	auto parameters = session.parameters();
+	auto editable = std::find_if(parameters.begin(), parameters.end(), [](midikraft::PatchParameter const& p) {
+		return p.editable && p.minValue && p.maxValue && *p.minValue != *p.maxValue;
+	});
+	REQUIRE(editable != parameters.end());
+	int newValue = editable->value != *editable->maxValue ? *editable->maxValue : *editable->minValue;
+	REQUIRE(session.setValue(editable->id, newValue));
+	REQUIRE(session.isDirty());
+
+	CHECK(session.wouldDiscardEdits(other));
+	CHECK(session.wouldDiscardEdits(original->patch())); // Going back to the unedited patch loses the edits too
+	CHECK(session.wouldDiscardEdits(nullptr));
+	auto saved = session.makeEditedPatch();
+	REQUIRE(saved);
+	CHECK_FALSE(session.wouldDiscardEdits(saved->patch())); // Selecting the saved copy keeps the sound
+
+	session.revert();
+	CHECK_FALSE(session.wouldDiscardEdits(other));
 }

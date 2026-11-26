@@ -1159,6 +1159,59 @@ void PatchView::sendPatchAsSysex(midikraft::PatchHolder &patch) {
 
 void PatchView::selectPatch(midikraft::PatchHolder &patch, bool alsoSendToSynth)
 {
+	if (!currentPatchDisplay_ || !currentPatchDisplay_->wouldDiscardEdits(patch)) {
+		selectPatchNow(patch, alsoSendToSynth);
+		return;
+	}
+	// The parameter grid has unsaved edits, ask before the new patch replaces them
+	auto options = MessageBoxOptions()
+		.withIconType(MessageBoxIconType::QuestionIcon)
+		.withTitle("Unsaved edits")
+		.withMessage("The parameter edits to '" + String::fromUTF8(UIModel::currentPatch().name().c_str()) + "' have not been saved. "
+			"Save them as a new patch before switching to '" + String::fromUTF8(patch.name().c_str()) + "'?")
+#if JUCE_MAJOR_VERSION >= 9
+		// JUCE 9 requires explicit result codes; these match JUCE 8's implicit ones for three buttons
+		.withButton("Save as new", 1)
+		.withButton("Discard", 2)
+		.withButton("Cancel", 0)
+#else
+		.withButton("Save as new")
+		.withButton("Discard")
+		.withButton("Cancel")
+#endif
+		.withAssociatedComponent(this);
+	midikraft::PatchHolder next = patch;
+	AlertWindow::showAsync(options, [safeThis = Component::SafePointer<PatchView>(this), next, alsoSendToSynth](int result) mutable {
+		if (!safeThis) return;
+		if (result == 1) {
+			safeThis->saveEditedPatchAndKeepPage();
+		}
+		else if (result == 2) {
+			safeThis->currentPatchDisplay_->discardEdits();
+		}
+		else {
+			// Stay on the edited patch; put the highlight back where the click moved it from
+			safeThis->patchButtons_->setActivePatch(UIModel::currentPatch().md5());
+			UIModel::instance()->currentPatch_.sendChangeMessage();
+			return;
+		}
+		safeThis->selectPatchNow(next, alsoSendToSynth);
+	});
+}
+
+void PatchView::saveEditedPatchAndKeepPage()
+{
+	auto edited = currentPatchDisplay_->makeEditedPatch();
+	if (!edited) return;
+	database_.putPatch(*edited);
+	spdlog::info("Saved edited patch '{}' as a new patch", edited->name());
+	// Stay on the page the user clicked on, only update the count and contents
+	patchButtons_->setTotalCount(getTotalCount(), false);
+	patchButtons_->refresh(true);
+}
+
+void PatchView::selectPatchNow(midikraft::PatchHolder &patch, bool alsoSendToSynth)
+{
 	auto layers = midikraft::Capability::hasCapability<midikraft::LayeredPatchCapability>(patch.patch());
 	// Always refresh the compare target, you just expect it after you clicked it!
 	compareTarget_ = UIModel::currentPatch(); // Previous patch is the one we will compare with

@@ -125,6 +125,22 @@ bool PatchTextBox::editButtonsShown() const {
 	return grid_.isVisible() && session_.canEdit();
 }
 
+bool PatchTextBox::wouldDiscardEdits(midikraft::PatchHolder const& next) const
+{
+	return session_.wouldDiscardEdits(next.patch());
+}
+
+std::shared_ptr<midikraft::PatchHolder> PatchTextBox::makeEditedPatch() const
+{
+	return session_.makeEditedPatch();
+}
+
+void PatchTextBox::discardEdits()
+{
+	session_.revert();
+	refreshGrid();
+}
+
 void PatchTextBox::refreshGrid() {
 	grid_.setParameters(session_.parameters());
 	grid_.setChangedIds(session_.changedIds());

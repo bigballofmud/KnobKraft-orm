@@ -50,6 +50,8 @@ public:
 	// Sets the total and shows the page holding the patch at index (zero-based in the whole list), marking it active.
 	// An index of -1 shows the first page.
 	void showPatchAt(int totalCount, int index, std::string const& md5);
+	// Marks the patch as the active one without selecting it, e.g. after a selection was cancelled
+	void setActivePatch(std::string const& md5);
 
 private:
 	enum class SliderAxis {

@@ -425,7 +425,7 @@ if(BUILD_UNIT_TESTS)
 	enable_testing()
 	add_test(NAME patch_text_test COMMAND patch_text_test)
 
-	add_executable(patch_parameter_test tests/patch_parameter_test.cpp)
+	add_executable(patch_parameter_test tests/patch_parameter_test.cpp The-Orm/PatchEditSession.cpp)
 	target_include_directories(patch_parameter_test PRIVATE
 		${CMAKE_CURRENT_LIST_DIR}
 		${CMAKE_CURRENT_LIST_DIR}/third_party/doctest)

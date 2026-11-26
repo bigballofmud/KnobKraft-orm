@@ -32,6 +32,7 @@ public:
 
 	void setPatchText(std::shared_ptr<midikraft::PatchHolder> patch);
 	void setSaveEditedPatchHandler(std::function<void(std::shared_ptr<midikraft::PatchHolder>)> handler);
+	PatchTextBox& patchText() { return patchAsText_; }
 
 	std::function<void()> forceResize;
 
@@ -53,6 +54,11 @@ public:
 	std::function<void(std::shared_ptr<midikraft::PatchHolder>)> onSaveEditedPatch; // A parameter edit was saved as a new patch
 
 	void setCurrentPatch(std::shared_ptr<midikraft::PatchHolder> patch);
+
+	// Unsaved parameter edits in the grid
+	bool wouldDiscardEdits(midikraft::PatchHolder const& next) { return metaData_.patchText().wouldDiscardEdits(next); }
+	std::shared_ptr<midikraft::PatchHolder> makeEditedPatch() { return metaData_.patchText().makeEditedPatch(); }
+	void discardEdits() { metaData_.patchText().discardEdits(); }
 	void reset();
 
 	void resized() override;

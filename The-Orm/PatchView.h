@@ -100,6 +100,8 @@ private:
 	std::vector<CategoryButtons::Category> predefinedCategories();
 
 	int getTotalCount();
+	void selectPatchNow(midikraft::PatchHolder& patch, bool alsoSendToSynth);
+	void saveEditedPatchAndKeepPage();
 	void loadPage(int skip, int limit, midikraft::PatchFilter const& filter, std::function<void(std::vector<midikraft::PatchHolder>)> callback);
 
 	std::vector<midikraft::PatchHolder> autoCategorize(std::vector<midikraft::PatchHolder> const &patches);

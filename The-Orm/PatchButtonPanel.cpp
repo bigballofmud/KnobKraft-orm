@@ -441,6 +441,10 @@ void PatchButtonPanel::jumpToPage(int pagenumber) {
 	}
 }
 
+void PatchButtonPanel::setActivePatch(std::string const& md5) {
+	activePatchMd5_ = md5;
+}
+
 void PatchButtonPanel::showPatchAt(int totalCount, int index, std::string const& md5) {
 	setTotalCount(totalCount, true);
 	if (index >= 0 && index < totalCount && pageSize_ > 0) {

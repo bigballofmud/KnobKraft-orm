@@ -31,6 +31,11 @@ public:
 	// Called with a new library patch when the user saves their parameter edits
 	std::function<void(std::shared_ptr<midikraft::PatchHolder>)> onSaveEditedPatch;
 
+	// Unsaved parameter edits, for asking before another patch replaces them
+	bool wouldDiscardEdits(midikraft::PatchHolder const& next) const;
+	std::shared_ptr<midikraft::PatchHolder> makeEditedPatch() const;
+	void discardEdits();
+
 private:
 	void refreshText();
 	void updateContentVisibility();
