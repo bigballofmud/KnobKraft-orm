@@ -84,6 +84,7 @@ set(SOURCES
 	PatchSearchComponent.cpp PatchSearchComponent.h
 	PatchTextBox.cpp PatchTextBox.h
 	PatchParameterGrid.cpp PatchParameterGrid.h PatchParameterViews.h
+	PatchEditSession.cpp PatchEditSession.h
 	PatchView.cpp PatchView.h
 	PatchSelectionEvents.h
 	ReceiveManualDumpWindow.cpp ReceiveManualDumpWindow.h

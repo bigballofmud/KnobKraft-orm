@@ -117,6 +117,8 @@ namespace knobkraft {
 		virtual std::string setupHelpText() const override;
 		midikraft::PatchTextViews getClearText(midikraft::DataFile const& patch) const override;
 		midikraft::PatchParameters getPatchParameters(midikraft::DataFile const& patch) const override;
+		bool canSetPatchParameters() const override;
+		std::shared_ptr<midikraft::DataFile> setPatchParameters(midikraft::DataFile const& patch, midikraft::PatchParameterValues const& values) const override;
 		std::vector<MidiMessage> onPatchSelected(MidiChannel channel, std::vector<uint8> const& patchData) const override;
 		std::vector<MidiMessage> onPatchSent(MidiChannel channel, std::vector<uint8> const& patchData) const override;
 

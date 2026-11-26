@@ -104,6 +104,14 @@ PatchView::PatchView(midikraft::PatchDatabase &database, std::vector<midikraft::
 		synthBank_->refreshPatch(favoritePatch);
 	}
 	);
+	currentPatchDisplay_->onSaveEditedPatch = [this](std::shared_ptr<midikraft::PatchHolder> edited) {
+		if (!edited) return;
+		database_.putPatch(*edited);
+		spdlog::info("Saved edited patch '{}' as a new patch", edited->name());
+		retrieveFirstPageFromDatabase();
+		// The synth already has the edited sound in its edit buffer, so only select it
+		selectPatch(*edited, false);
+	};
 	currentPatchDisplay_->onCurrentPatchClicked = [this](std::shared_ptr<midikraft::PatchHolder> patch) {
 		if (patch) {
 			selectPatch(*patch, true);

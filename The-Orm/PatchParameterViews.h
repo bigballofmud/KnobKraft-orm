@@ -9,11 +9,10 @@ namespace patch_parameters {
 
 	// Parameters from a synth's PatchParametersCapability (Python adaptations), else from the
 	// older per-patch DetailedParametersCapability that the native C++ synths implement.
-	inline midikraft::PatchParameters parametersFor(midikraft::PatchHolder const& patch) {
-		auto data = patch.patch();
+	inline midikraft::PatchParameters parametersFor(std::shared_ptr<midikraft::Synth> synth, std::shared_ptr<midikraft::DataFile> data) {
 		if (!data) return {};
 
-		auto capability = midikraft::Capability::hasCapability<midikraft::PatchParametersCapability>(patch.synth());
+		auto capability = synth ? midikraft::Capability::hasCapability<midikraft::PatchParametersCapability>(synth.get()) : nullptr;
 		if (capability) {
 			auto parameters = capability->getPatchParameters(*data);
 			if (!parameters.empty()) return parameters;
@@ -38,6 +37,10 @@ namespace patch_parameters {
 			}
 		}
 		return result;
+	}
+
+	inline midikraft::PatchParameters parametersFor(midikraft::PatchHolder const& patch) {
+		return parametersFor(patch.smartSynth(), patch.patch());
 	}
 
 }

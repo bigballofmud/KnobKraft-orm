@@ -1,0 +1,42 @@
+#pragma once
+
+#include "JuceHeader.h"
+
+#include "PatchHolder.h"
+#include "PatchParametersCapability.h"
+
+#include <map>
+#include <set>
+
+// Edits one patch through its synth's PatchParametersCapability. The library patch is never changed:
+// edits go to a working copy, which is sent to the synth's edit buffer (throttled) and can be saved as a new patch.
+class PatchEditSession : private Timer {
+public:
+	~PatchEditSession() override;
+
+	void start(std::shared_ptr<midikraft::PatchHolder> original);
+	bool isEditing(std::shared_ptr<midikraft::DataFile> const& libraryPatch) const;
+
+	bool canEdit() const;
+	bool isDirty() const;
+
+	midikraft::PatchParameters parameters() const;
+	std::set<std::string> changedIds() const;
+
+	bool setValue(std::string const& id, int value);
+	void revert();
+
+	// A new library patch holding the edited data and the original's metadata
+	std::shared_ptr<midikraft::PatchHolder> makeEditedPatch() const;
+
+private:
+	void timerCallback() override;
+	void scheduleSend();
+	void sendNow();
+	midikraft::PatchParametersCapability* capability() const;
+
+	std::shared_ptr<midikraft::PatchHolder> original_;
+	std::shared_ptr<midikraft::DataFile> current_;
+	std::map<std::string, int> originalValues_;
+	bool sendPending_ = false;
+};

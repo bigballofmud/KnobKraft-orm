@@ -86,6 +86,7 @@ namespace knobkraft {
 		* kSetupHelp = "setupHelp",
 		* kGetClearText = "getClearText",
 		* kGetPatchParameters = "getPatchParameters",
+		* kSetPatchParameters = "setPatchParameters",
 		* kGetStoredTags = "storedTags",
 		* kIndicateBankDownloadMethod= "bankDownloadMethodOverride",
 		* kOnPatchSelected = "onPatchSelected",
@@ -134,6 +135,7 @@ namespace knobkraft {
 		kSetupHelp,
 		kGetClearText,
 		kGetPatchParameters,
+		kSetPatchParameters,
 		kGetStoredTags,
 		kMessageTimings,
 		kOnPatchSelected,
@@ -763,6 +765,11 @@ namespace knobkraft {
 				parameter.minValue = optionalInt(dict, "min");
 				parameter.maxValue = optionalInt(dict, "max");
 				parameter.text = dict.contains("text") && !dict["text"].is_none() ? asText(dict["text"]) : std::to_string(parameter.value);
+				if (dict.contains("options") && !dict["options"].is_none()) {
+					for (auto option : py::reinterpret_borrow<py::sequence>(dict["options"])) {
+						parameter.options.push_back(asText(option));
+					}
+				}
 				if (parameter.name.empty() || parameter.id.empty()) {
 					throw std::runtime_error("getPatchParameters names and ids must be nonempty");
 				}
@@ -778,6 +785,42 @@ namespace knobkraft {
 			logAdaptationError(kGetPatchParameters, ex);
 		}
 		return {};
+	}
+
+	bool GenericAdaptation::canSetPatchParameters() const
+	{
+		return pythonModuleHasFunction(kGetPatchParameters) && pythonModuleHasFunction(kSetPatchParameters);
+	}
+
+	std::shared_ptr<midikraft::DataFile> GenericAdaptation::setPatchParameters(midikraft::DataFile const& patch, midikraft::PatchParameterValues const& values) const
+	{
+		py::gil_scoped_acquire acquire;
+		if (!pythonModuleHasFunction(kSetPatchParameters)) return nullptr;
+		try {
+			std::vector<int> data(patch.data().begin(), patch.data().end());
+			py::dict newValues;
+			for (auto const& [id, value] : values) {
+				newValues[py::str(id)] = value;
+			}
+			py::object result = callMethod(kSetPatchParameters, data, newValues);
+			auto bytes = result.cast<std::vector<int>>();
+			if (bytes.empty()) {
+				throw std::runtime_error("setPatchParameters returned no data");
+			}
+			Synth::PatchData newData;
+			for (int byte : bytes) {
+				if (byte < 0 || byte > 255) {
+					throw std::runtime_error("setPatchParameters returned a value that is not a byte");
+				}
+				newData.push_back(static_cast<uint8>(byte));
+			}
+			auto dataType = patch.dataTypeID() == GenericPatch::EDIT_BUFFER ? GenericPatch::EDIT_BUFFER : GenericPatch::PROGRAM_DUMP;
+			return std::make_shared<GenericPatch>(this, adaptation_module, newData, dataType);
+		}
+		catch (std::exception& ex) {
+			logAdaptationError(kSetPatchParameters, ex);
+		}
+		return nullptr;
 	}
 
 	int GenericAdaptation::defaultReplyTimeoutMs() const

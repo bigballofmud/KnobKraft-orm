@@ -11,6 +11,7 @@
 #include "PatchHolder.h"
 #include "PatchTextCapability.h"
 #include "PatchParameterGrid.h"
+#include "PatchEditSession.h"
 
 class PatchTextBox : public Component {
 public:
@@ -27,10 +28,16 @@ public:
 	// Height needed at the given width; a negative width uses the current width
 	float desiredHeight(int width = -1) const;
 
+	// Called with a new library patch when the user saves their parameter edits
+	std::function<void(std::shared_ptr<midikraft::PatchHolder>)> onSaveEditedPatch;
+
 private:
 	void refreshText();
 	void updateContentVisibility();
 	bool gridSelected() const;
+	bool editButtonsShown() const;
+	void refreshGrid();
+	void updateEditButtons();
 
 	std::function<void()> forceResize_;
 	bool showParams_;
@@ -44,6 +51,9 @@ private:
 	PatchParameterGrid grid_;
 	bool preferGrid_ = true; // Show the grid when a patch has parameters, until the user picks another view
 	bool toggleTouched_ = false; // The user has opened or closed the panel themselves
+	PatchEditSession session_;
+	TextButton saveEdits_;
+	TextButton revertEdits_;
 };
 
 

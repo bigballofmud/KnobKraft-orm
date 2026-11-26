@@ -690,3 +690,60 @@ def test_parameters_of_edit_buffer_match_program():
 def test_no_parameters_for_unrelated_data():
     assert getPatchParameters([]) == []
     assert getPatchParameters([0xF0, 0x43, 0x00, 0xF7]) == []
+
+
+# ---------------------------------------------------------------------------
+# Parameter editing (setPatchParameters)
+# ---------------------------------------------------------------------------
+
+def test_set_patch_parameter_changes_only_that_value():
+    original = _real_dump()[0]
+    edited = setPatchParameters(original, {"string1.tone1.key_shift": 36})
+    before, after = _by_id(getPatchParameters(original)), _by_id(getPatchParameters(edited))
+    assert after["string1.tone1.key_shift"]["value"] == 36
+    assert after["string1.tone1.key_shift"]["text"] == "+12"
+    changed = [i for i in before if before[i]["value"] != after[i]["value"]]
+    assert changed == ["string1.tone1.key_shift"]
+
+
+def test_edited_patch_keeps_its_address_name_and_valid_checksum():
+    original = _real_dump()[5]
+    edited = setPatchParameters(original, {"common.reverb_level": 0})
+    assert isSingleProgramDump(edited)
+    assert numberFromDump(edited) == numberFromDump(original)
+    assert nameFromDump(edited) == nameFromDump(original)
+    Roland_GR50._parse_message(edited)  # raises on a bad checksum
+
+
+def test_set_tone_parameter_round_trips():
+    original = _real_dump()[PATCH_COUNT + 3]
+    edited = setPatchParameters(original, {"partial2.tvf_cutoff": 77, "common.envelope_mode": 1})
+    after = _by_id(getPatchParameters(edited))
+    assert after["partial2.tvf_cutoff"]["value"] == 77
+    assert after["common.envelope_mode"]["text"] == "no sustain"
+    assert isSingleProgramDump(edited)
+    assert numberFromDump(edited) == numberFromDump(original)
+
+
+def test_set_parameter_on_edit_buffer_stays_an_edit_buffer():
+    buffer = convertToEditBuffer(0, _real_dump()[0])
+    edited = setPatchParameters(buffer, {"common.velocity_curve": 1})
+    assert isEditBufferDump(edited)
+
+
+def test_setting_the_same_values_gives_the_same_fingerprint():
+    original = _real_dump()[0]
+    values = {p["id"]: p["value"] for p in getPatchParameters(original)}
+    assert calculateFingerprint(setPatchParameters(original, values)) == calculateFingerprint(original)
+
+
+def test_choice_parameters_offer_options():
+    patch = _by_id(getPatchParameters(_real_dump()[0]))
+    assert patch["string1.tone_mode"]["options"] == ["1st", "2nd", "single", "dual", "velo switch", "mix"]
+    assert "options" not in patch["string1.tone1.output_level"]
+
+
+@pytest.mark.parametrize("values", [{"no.such.parameter": 1}, {"common.reverb_type": 8}, {"common.reverb_type": -1}])
+def test_invalid_edits_are_rejected(values):
+    with pytest.raises(ValueError):
+        setPatchParameters(_real_dump()[0], values)

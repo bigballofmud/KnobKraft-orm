@@ -743,7 +743,8 @@ Return a list of dicts, one per parameter, in the order they should appear:
 | `id` | no | Stable identifier, unique within the patch; defaults to `name` |
 | `group` | no | Section heading; parameters with the same group are shown together |
 | `text` | no | Display text, for example `"+12"`, `"on"` or `"C#3"`; defaults to `value` |
-| `min`, `max` | no | Value range, shown in the cell's tooltip |
+| `min`, `max` | no | Value range; editing stays inside it (0 to 127 when missing) |
+| `options` | no | Display text for each value from `min` upwards; editing offers them as a menu |
 
 ```python
 def getPatchParameters(message):
@@ -758,13 +759,36 @@ def getPatchParameters(message):
 ```
 
 For a complete implementation with several patch types, see `getPatchParameters` in
-`Roland_GR50.py`. Ids are not shown, but keep them stable: later editing features will
-use them to address parameters.
+`Roland_GR50.py`. Ids are not shown, but keep them stable: editing uses them to address
+parameters.
 
 Return `[]` for patch types you cannot decode. Each `id` must be unique and each `name`
 nonempty; if not, or if the callback raises, the error is logged and the grid is
 hidden. Native C++ synths that define parameters get the same grid without this
 callback.
+
+### Editing parameters
+
+Also define `setPatchParameters(message, values)` to make the grid editable. `values` is
+a dict from parameter id to new raw value. Return the complete patch data with the values
+applied, in the same format and at the same program or edit buffer address as `message`,
+with checksums recalculated. Raise an exception for an unknown id or a value out of range;
+the edit is then refused and the error logged.
+
+```python
+def setPatchParameters(message, values):
+    data = list(message)
+    for parameter_id, value in values.items():
+        data[8 + OFFSETS[parameter_id]] = value  # Use your synth's layout and framing here.
+    return data
+```
+
+In the grid, drag a number up or down to change it (Shift for fine steps), or click a
+parameter with `options` to pick from a menu. Each change is sent to the synth's edit
+buffer, at most every 150 ms while dragging. Changed parameters are outlined. **Save as
+new** stores the edited patch as a new library entry with the original's name, categories
+and notes; the original is not changed. **Revert** goes back to the original and sends it
+again. Selecting another patch discards unsaved edits.
 
 ## Patch selection and send notifications
 

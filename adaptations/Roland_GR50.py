@@ -495,7 +495,10 @@ def _signed(center: int):
 
 
 def _labels(*names: str):
-    return lambda v: names[v] if 0 <= v < len(names) else str(v)
+    def formatter(v: int) -> str:
+        return names[v] if 0 <= v < len(names) else str(v)
+    formatter.options = list(names)  # offered as a menu when editing
+    return formatter
 
 
 def _pan(v: int) -> str:
@@ -628,61 +631,96 @@ def _label(parameter_id: str) -> str:
     return text[0].upper() + text[1:]
 
 
-def _decode(data: List[int], base: int, table, group: str, id_prefix: str, name_prefix: str = "") -> List[Dict]:
-    result = []
-    for offset, parameter_id, max_value, formatter in table:
-        value = data[base + offset]
-        result.append({
-            "id": f"{id_prefix}{parameter_id}",
-            "name": f"{name_prefix}{_label(parameter_id)}",
-            "group": group,
-            "value": value,
-            "min": 0,
-            "max": max_value,
-            "text": formatter(value),
-        })
-    return result
+def _entries(base: int, table, group: str, id_prefix: str, name_prefix: str = ""):
+    """Layout entries: (id, name, group, absolute byte offset, max, formatter)."""
+    return [(f"{id_prefix}{parameter_id}", f"{name_prefix}{_label(parameter_id)}", group, base + offset, max_value, formatter)
+            for offset, parameter_id, max_value, formatter in table]
 
 
-def _patch_parameters(data: List[int]) -> List[Dict]:
-    result = _decode(data, 0, _PATCH_COMMON, "Common", "common.")
+def _patch_layout():
+    result = _entries(0, _PATCH_COMMON, "Common", "common.")
     for string in range(6):
         base = _PATCH_INTERNAL_OFFSET + string * 20
         group = f"String {string + 1}"
         prefix = f"string{string + 1}."
-        result += _decode(data, base, _PATCH_MODE_GROUP, group, prefix)
-        result += _decode(data, base + 0x02, _PATCH_TONE_GROUP, group, prefix + "tone1.", "1st ")
-        result += _decode(data, base + 0x0B, _PATCH_TONE_GROUP, group, prefix + "tone2.", "2nd ")
+        result += _entries(base, _PATCH_MODE_GROUP, group, prefix)
+        result += _entries(base + 0x02, _PATCH_TONE_GROUP, group, prefix + "tone1.", "1st ")
+        result += _entries(base + 0x0B, _PATCH_TONE_GROUP, group, prefix + "tone2.", "2nd ")
     for branch_index, branch in enumerate("AB"):
         base = _PATCH_EXTERNAL_OFFSET + branch_index * 24
         group = f"External {branch}"
         prefix = f"external{branch}."
-        result += _decode(data, base, _PATCH_EXTERNAL_GENERAL, group, prefix)
+        result += _entries(base, _PATCH_EXTERNAL_GENERAL, group, prefix)
         for string in range(6):
-            result += _decode(data, base + 0x06 + string * 3, _PATCH_EXTERNAL_STRING, group,
-                              f"{prefix}string{string + 1}.", f"String {string + 1} ")
+            result += _entries(base + 0x06 + string * 3, _PATCH_EXTERNAL_STRING, group,
+                               f"{prefix}string{string + 1}.", f"String {string + 1} ")
     return result
 
 
-def _tone_parameters(data: List[int]) -> List[Dict]:
-    result = _decode(data, 0, _TONE_COMMON, "Common", "common.")
+def _tone_layout():
+    result = _entries(0, _TONE_COMMON, "Common", "common.")
     for partial in range(4):
         base = _TONE_PARTIAL_OFFSET + partial * _TONE_PARTIAL_SIZE
-        result += _decode(data, base, _TONE_PARTIAL, f"Partial {partial + 1}", f"partial{partial + 1}.")
+        result += _entries(base, _TONE_PARTIAL, f"Partial {partial + 1}", f"partial{partial + 1}.")
     return result
+
+
+_PATCH_LAYOUT = _patch_layout()
+_TONE_LAYOUT = _tone_layout()
+
+
+def _decode(data: List[int], layout) -> List[Dict]:
+    result = []
+    for parameter_id, name, group, offset, max_value, formatter in layout:
+        value = data[offset]
+        parameter = {"id": parameter_id, "name": name, "group": group, "value": value,
+                     "min": 0, "max": max_value, "text": formatter(value)}
+        if hasattr(formatter, "options"):
+            parameter["options"] = formatter.options
+        result.append(parameter)
+    return result
+
+
+def _encode(data: List[int], layout, values: Dict[str, int]) -> List[int]:
+    by_id = {entry[0]: entry for entry in layout}
+    edited = list(data)
+    for parameter_id, value in values.items():
+        if parameter_id not in by_id:
+            raise ValueError(f"Unknown GR-50 parameter '{parameter_id}'")
+        _, _, _, offset, max_value, _ = by_id[parameter_id]
+        if not 0 <= value <= max_value:
+            raise ValueError(f"Value {value} out of range 0..{max_value} for '{parameter_id}'")
+        edited[offset] = value
+    return edited
 
 
 def getPatchParameters(messages: List[int]) -> List[Dict]:
     try:
         _, data = _extract_patch_data(messages)
-        return _patch_parameters(data)
+        return _decode(data, _PATCH_LAYOUT)
     except ValueError:
         pass
     try:
         _, data = _extract_tone_data(messages)
-        return _tone_parameters(data)
+        return _decode(data, _TONE_LAYOUT)
     except ValueError:
         return []
+
+
+def setPatchParameters(messages: List[int], values: Dict[str, int]) -> List[int]:
+    """Return the dump with the given raw values applied, at the same address as the input."""
+    try:
+        patch_no, data = _extract_patch_data(messages)
+    except ValueError:
+        patch_no = data = None
+    if data is not None:
+        edited = _encode(data, _PATCH_LAYOUT, values)
+        address = PATCH_TEMP_BASE if patch_no is None else _patch_address(patch_no)
+        return _build_message(_device_id, COMMAND_DT1, address, edited)
+    tone_no, data = _extract_tone_data(messages)
+    edited = _encode(data, _TONE_LAYOUT, values)
+    address = TONE_TEMP_BASE if tone_no is None else _tone_address(tone_no)
+    return _build_message(_device_id, COMMAND_DT1, address, edited)
 
 
 def make_test_data():

@@ -40,6 +40,25 @@ PatchTextBox::PatchTextBox(std::function<void()> forceResize, bool showParams /*
 	};
 
 	addChildComponent(grid_);
+	grid_.onValueChanged = [this](std::string const& id, int value) {
+		if (session_.setValue(id, value)) refreshGrid();
+	};
+
+	saveEdits_.setButtonText("Save as new");
+	saveEdits_.setTooltip("Store the edited patch as a new patch in the library. The original stays as it is.");
+	saveEdits_.onClick = [this]() {
+		auto edited = session_.makeEditedPatch();
+		if (edited && onSaveEditedPatch) onSaveEditedPatch(edited);
+	};
+	addChildComponent(saveEdits_);
+
+	revertEdits_.setButtonText("Revert");
+	revertEdits_.setTooltip("Discard the edits and send the original patch to the synth again.");
+	revertEdits_.onClick = [this]() {
+		session_.revert();
+		refreshGrid();
+	};
+	addChildComponent(revertEdits_);
 
 	addChildComponent(viewSelector_);
 	viewSelector_.setVisible(showParams_);
@@ -60,11 +79,15 @@ void PatchTextBox::fillTextBox(std::shared_ptr<midikraft::PatchHolder> patch)
 	if (previousId >= 3 && previousId != kGridId) previousName = customViews_.at(static_cast<size_t>(previousId - 3)).first;
 	bool firstPatch = !patch_;
 	patch_ = patch;
+	// Keep the edits when the same library patch is shown again, e.g. after a category change
+	if (!session_.isEditing(patch ? patch->patch() : nullptr)) session_.start(patch);
 	customViews_ = patch ? patch_text::viewsFor(*patch) : midikraft::PatchTextViews{};
 	viewSelector_.clear(dontSendNotification);
-	auto parameters = patch ? patch_parameters::parametersFor(*patch) : midikraft::PatchParameters{};
+	auto parameters = session_.canEdit() ? session_.parameters() : (patch ? patch_parameters::parametersFor(*patch) : midikraft::PatchParameters{});
 	bool hasGrid = !parameters.empty();
 	grid_.setParameters(std::move(parameters));
+	grid_.setEditable(session_.canEdit());
+	grid_.setChangedIds(session_.changedIds());
 	if (hasGrid) viewSelector_.addItem("Parameter grid", kGridId);
 	viewSelector_.addItem("Raw hex", 1);
 	bool hasParams = patch && midikraft::Capability::hasCapability<midikraft::DetailedParametersCapability>(patch->patch());
@@ -94,6 +117,27 @@ void PatchTextBox::updateContentVisibility() {
 	textBox_->setVisible(open && !gridSelected());
 	grid_.setVisible(open && gridSelected());
 	viewSelector_.setVisible(showParams_ || (open && viewSelector_.getNumItems() > 1));
+	updateEditButtons();
+	resized();
+}
+
+bool PatchTextBox::editButtonsShown() const {
+	return grid_.isVisible() && session_.canEdit();
+}
+
+void PatchTextBox::refreshGrid() {
+	grid_.setParameters(session_.parameters());
+	grid_.setChangedIds(session_.changedIds());
+	updateEditButtons();
+}
+
+void PatchTextBox::updateEditButtons() {
+	bool shown = editButtonsShown();
+	bool dirty = session_.isDirty();
+	saveEdits_.setVisible(shown);
+	revertEdits_.setVisible(shown);
+	saveEdits_.setEnabled(dirty);
+	revertEdits_.setEnabled(dirty);
 }
 
 void PatchTextBox::refreshText() {
@@ -113,6 +157,10 @@ void PatchTextBox::resized()
 
 	auto topRow = area.removeFromTop(kTopRowHeight);
 	if (!showParams_) hexBased_.setBounds(topRow.removeFromLeft(100));
+	if (editButtonsShown()) {
+		revertEdits_.setBounds(topRow.removeFromRight(70).withTrimmedLeft(4));
+		saveEdits_.setBounds(topRow.removeFromRight(100).withTrimmedLeft(4));
+	}
 	viewSelector_.setBounds(topRow);
 
 	textBox_->setBounds(area);

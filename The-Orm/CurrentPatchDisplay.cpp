@@ -53,6 +53,11 @@ void MetaDataArea::setPatchText(std::shared_ptr<midikraft::PatchHolder> patch)
 	patchAsText_.setVisible(patch && patch->patch());
 }
 
+void MetaDataArea::setSaveEditedPatchHandler(std::function<void(std::shared_ptr<midikraft::PatchHolder>)> handler)
+{
+	patchAsText_.onSaveEditedPatch = std::move(handler);
+}
+
 void MetaDataArea::resized()
 {
 	auto area = getLocalBounds();
@@ -110,6 +115,9 @@ CurrentPatchDisplay::CurrentPatchDisplay(midikraft::PatchDatabase &database, std
 	metaData_.forceResize = [this]() {
 		resized();
 	};
+	metaData_.setSaveEditedPatchHandler([this](std::shared_ptr<midikraft::PatchHolder> edited) {
+		if (onSaveEditedPatch) onSaveEditedPatch(edited);
+	});
 
 	metaDataScroller_.setViewedComponent(&metaData_, false);
 	addAndMakeVisible(metaDataScroller_);

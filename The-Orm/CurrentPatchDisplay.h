@@ -31,6 +31,7 @@ public:
 	int getDesiredHeight(int width);
 
 	void setPatchText(std::shared_ptr<midikraft::PatchHolder> patch);
+	void setSaveEditedPatchHandler(std::function<void(std::shared_ptr<midikraft::PatchHolder>)> handler);
 
 	std::function<void()> forceResize;
 
@@ -49,6 +50,7 @@ public:
 	virtual ~CurrentPatchDisplay() override;
 
 	std::function<void(std::shared_ptr<midikraft::PatchHolder>)> onCurrentPatchClicked;
+	std::function<void(std::shared_ptr<midikraft::PatchHolder>)> onSaveEditedPatch; // A parameter edit was saved as a new patch
 
 	void setCurrentPatch(std::shared_ptr<midikraft::PatchHolder> patch);
 	void reset();
