@@ -223,7 +223,8 @@ namespace midikraft {
 
 	void Rev2ParamDefinition::setInPatch(DataFile &patch, int value) const
 	{
-		jassert(type() == SynthParameterDefinition::ParamType::INT);
+		// Lookup parameters are stored as a plain integer too
+		jassert(type() == SynthParameterDefinition::ParamType::INT || type() == SynthParameterDefinition::ParamType::LOOKUP);
 		patch.setAt(sysexIndex(), (uint8)value);
 	}
 

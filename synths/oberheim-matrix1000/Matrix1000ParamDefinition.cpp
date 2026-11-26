@@ -57,12 +57,22 @@ namespace midikraft {
 
 	int Matrix1000ParamDefinition::minValue() const
 	{
+		// Negative bits_ mark a signed value, read as two's complement in valueInPatch
+		if (bitposition_ == -1 && bits_ < 0) {
+			return -(1 << (-bits_ - 1));
+		}
 		return 0;
 	}
 
 	int Matrix1000ParamDefinition::maxValue() const
 	{
-		return 1 << (bits_ - 1);
+		if (bitposition_ != -1) {
+			return 1; // A single bit of a shared byte
+		}
+		if (bits_ < 0) {
+			return (1 << (-bits_ - 1)) - 1;
+		}
+		return (1 << bits_) - 1;
 	}
 
 	/*bool Matrix1000ParamDefinition::matchesController(int controllerNumber) const
@@ -140,7 +150,18 @@ namespace midikraft {
 
 	void Matrix1000ParamDefinition::setInPatch(DataFile &patch, int value) const
 	{
-		patch.setAt(sysexIndex_, (uint8) value);
+		// Mirror valueInPatch: no sysex position means nothing to write, and single-bit parameters share their byte
+		if (sysexIndex_ == -1 || sysexIndex_ >= static_cast<int>(patch.data().size())) {
+			return;
+		}
+		if (bitposition_ != -1) {
+			uint8 current = patch.at(sysexIndex_);
+			uint8 mask = (uint8) (1 << bitposition_);
+			patch.setAt(sysexIndex_, (uint8) ((current & ~mask) | ((value & 1) << bitposition_)));
+		}
+		else {
+			patch.setAt(sysexIndex_, (uint8) value);
+		}
 	}
 
 	std::string Matrix1000ParamDefinition::description() const

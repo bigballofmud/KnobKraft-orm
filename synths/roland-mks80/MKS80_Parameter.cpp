@@ -115,7 +115,8 @@ namespace midikraft {
 
 	void MKS80_Parameter::setInPatch(DataFile &patch, int value) const
 	{
-		auto mks80Patch = dynamic_cast<MKS80_Patch const &>(patch);
+		// A reference, so the value lands in the given patch rather than in a copy of it
+		auto& mks80Patch = dynamic_cast<MKS80_Patch&>(patch);
 		if (value >= min_ && value <= max_) {
 			mks80Patch.dataSection(paramType_, section_)[paramIndex_] = (uint8) value;
 		}

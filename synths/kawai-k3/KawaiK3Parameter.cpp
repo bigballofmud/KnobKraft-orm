@@ -241,7 +241,7 @@ namespace midikraft {
 				patch.setAt(sysexIndex() - 1, cleanValue | setValue);
 			}
 			else {
-				uint8 cleanValue = currentValue & (!bitMask()) & 0x7F;  // Additionally clear out the sign bit
+				uint8 cleanValue = (uint8)(currentValue & (~shiftedBitMask()) & 0x7F);  // Additionally clear out the sign bit
 				uint8 setValue = (uint8)((value & bitMask()) << shift());
 				patch.setAt(sysexIndex() - 1, cleanValue | setValue);
 			}
