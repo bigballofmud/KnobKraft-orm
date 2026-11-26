@@ -745,6 +745,7 @@ Return a list of dicts, one per parameter, in the order they should appear:
 | `text` | no | Display text, for example `"+12"`, `"on"` or `"C#3"`; defaults to `value` |
 | `min`, `max` | no | Value range; editing stays inside it (0 to 127 when missing) |
 | `options` | no | Display text for each value from `min` upwards; editing offers them as a menu |
+| `editable` | no | `False` to show a parameter without allowing edits; defaults to `True` |
 
 ```python
 def getPatchParameters(message):
@@ -765,7 +766,7 @@ parameters.
 Return `[]` for patch types you cannot decode. Each `id` must be unique and each `name`
 nonempty; if not, or if the callback raises, the error is logged and the grid is
 hidden. Native C++ synths that define parameters get the same grid without this
-callback.
+callback, and can edit it too (Rev2 patches show both layers).
 
 ### Editing parameters
 

@@ -765,6 +765,9 @@ namespace knobkraft {
 				parameter.minValue = optionalInt(dict, "min");
 				parameter.maxValue = optionalInt(dict, "max");
 				parameter.text = dict.contains("text") && !dict["text"].is_none() ? asText(dict["text"]) : std::to_string(parameter.value);
+				if (dict.contains("editable") && !dict["editable"].is_none()) {
+					parameter.editable = dict["editable"].cast<bool>();
+				}
 				if (dict.contains("options") && !dict["options"].is_none()) {
 					for (auto option : py::reinterpret_borrow<py::sequence>(dict["options"])) {
 						parameter.options.push_back(asText(option));

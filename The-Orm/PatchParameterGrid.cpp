@@ -82,7 +82,7 @@ bool PatchParameterGrid::isChoice(midikraft::PatchParameter const& parameter) co
 void PatchParameterGrid::mouseMove(MouseEvent const& e)
 {
 	auto parameter = editable_ ? parameterAt(e.getPosition()) : nullptr;
-	if (!parameter) setMouseCursor(MouseCursor::NormalCursor);
+	if (!parameter || !parameter->editable) setMouseCursor(MouseCursor::NormalCursor);
 	else if (isChoice(*parameter)) setMouseCursor(MouseCursor::PointingHandCursor);
 	else setMouseCursor(MouseCursor::UpDownResizeCursor);
 }
@@ -92,7 +92,7 @@ void PatchParameterGrid::mouseDown(MouseEvent const& e)
 	dragId_.clear();
 	if (!editable_ || !onValueChanged) return;
 	auto parameter = parameterAt(e.getPosition());
-	if (!parameter) return;
+	if (!parameter || !parameter->editable) return;
 	if (isChoice(*parameter)) {
 		showOptionsMenu(*parameter);
 		return;
@@ -194,7 +194,10 @@ String PatchParameterGrid::getTooltip()
 			if (parameter.minValue && parameter.maxValue) {
 				tip << " (range " << *parameter.minValue << " to " << *parameter.maxValue << ")";
 			}
-			if (editable_) {
+			if (editable_ && !parameter.editable) {
+				tip << "\nCan't be edited here";
+			}
+			else if (editable_) {
 				tip << (isChoice(parameter) ? "\nClick to choose" : "\nDrag up or down to change, Shift for fine steps");
 			}
 			return tip;

@@ -34,6 +34,7 @@ private:
 	void scheduleSend();
 	void sendNow();
 	midikraft::PatchParametersCapability* capability() const;
+	bool usesAdaptation() const; // Python adaptation with setPatchParameters, else the native parameter definitions
 
 	std::shared_ptr<midikraft::PatchHolder> original_;
 	std::shared_ptr<midikraft::DataFile> current_;

@@ -410,11 +410,21 @@ if(BUILD_UNIT_TESTS)
 	add_executable(patch_text_test
 		tests/patch_text_test.cpp
 		The-Orm/PatchDiff.cpp
-		The-Orm/PatchTextBox.cpp)
+		The-Orm/PatchTextBox.cpp
+		The-Orm/PatchParameterGrid.cpp
+		The-Orm/PatchEditSession.cpp)
 	target_include_directories(patch_text_test PRIVATE
 		${CMAKE_CURRENT_LIST_DIR}
 		${CMAKE_CURRENT_LIST_DIR}/third_party/doctest)
 	target_link_libraries(patch_text_test PRIVATE midikraft-database knobkraft-generic-adaptation)
 	enable_testing()
 	add_test(NAME patch_text_test COMMAND patch_text_test)
+
+	add_executable(patch_parameter_test tests/patch_parameter_test.cpp)
+	target_include_directories(patch_parameter_test PRIVATE
+		${CMAKE_CURRENT_LIST_DIR}
+		${CMAKE_CURRENT_LIST_DIR}/third_party/doctest)
+	target_link_libraries(patch_parameter_test PRIVATE midikraft-database
+		midikraft-oberheim-matrix1000 midikraft-kawai-k3 midikraft-roland-mks80 midikraft-sequential-rev2)
+	add_test(NAME patch_parameter_test COMMAND patch_parameter_test)
 endif()

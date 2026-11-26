@@ -41,10 +41,16 @@ midikraft::PatchParametersCapability* PatchEditSession::capability() const
 	return midikraft::Capability::hasCapability<midikraft::PatchParametersCapability>(original_->synth());
 }
 
-bool PatchEditSession::canEdit() const
+bool PatchEditSession::usesAdaptation() const
 {
 	auto cap = capability();
 	return cap && current_ && cap->canSetPatchParameters();
+}
+
+bool PatchEditSession::canEdit() const
+{
+	if (!original_ || !current_) return false;
+	return usesAdaptation() || patch_parameters::canEditNatively(original_->smartSynth(), current_);
 }
 
 bool PatchEditSession::isDirty() const
@@ -73,10 +79,18 @@ std::set<std::string> PatchEditSession::changedIds() const
 
 bool PatchEditSession::setValue(std::string const& id, int value)
 {
-	auto cap = capability();
-	if (!cap || !current_) return false;
-	auto edited = cap->setPatchParameters(*current_, { { id, value } });
-	if (!edited) return false;
+	if (!canEdit()) return false;
+	std::shared_ptr<midikraft::DataFile> edited;
+	if (usesAdaptation()) {
+		edited = capability()->setPatchParameters(*current_, { { id, value } });
+	}
+	else {
+		edited = patch_parameters::applyNativeValue(original_->smartSynth(), current_, original_->patchNumber(), id, value);
+	}
+	if (!edited) {
+		spdlog::warn("Could not set parameter {} to {} for {}", id, value, original_->name());
+		return false;
+	}
 	current_ = edited;
 	scheduleSend();
 	return true;
