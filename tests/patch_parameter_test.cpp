@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT
 #include "doctest/doctest.h"
 
+#include "The-Orm/PatchCopyName.h"
 #include "The-Orm/PatchEditSession.h"
 #include "The-Orm/PatchParameterViews.h"
 
@@ -10,7 +11,9 @@
 #include "Rev2.h"
 #include "Settings.h"
 
+#include <cctype>
 #include <map>
+#include <set>
 
 int main(int argc, char** argv) {
 	juce::ScopedJuceInitialiser_GUI gui;
@@ -139,6 +142,59 @@ TEST_CASE("Switching patches warns only when edits would be lost") {
 	REQUIRE(saved);
 	CHECK_FALSE(session.wouldDiscardEdits(saved->patch())); // Selecting the saved copy keeps the sound
 
+	// The copy has its own data: renaming it (which writes into the bytes on synths that store names) leaves the session alone
+	CHECK(saved->patch() != session.makeEditedPatch()->patch());
+	auto before = session.makeEditedPatch()->patch()->data();
+	saved->setName("RENAMED");
+	CHECK(session.makeEditedPatch()->patch()->data() == before);
+
 	session.revert();
 	CHECK_FALSE(session.wouldDiscardEdits(other));
+}
+
+TEST_CASE("Saved copies get the lowest free number that fits the synth") {
+	std::set<std::string> names;
+	auto taken = [&names](std::string const& name) { return names.count(name) > 0; };
+	auto keepAll = [](std::string const& name) { return name; };
+	auto cutTo = [](size_t length) {
+		return [length](std::string const& name) { return name.substr(0, length); };
+	};
+
+	SUBCASE("first copy") {
+		names = { "Pedal Steel" };
+		CHECK(patch_copy_name::nameForCopy("Pedal Steel", taken, keepAll) == "Pedal Steel 2");
+	}
+	SUBCASE("skips numbers in use") {
+		names = { "Pedal Steel", "Pedal Steel 2", "Pedal Steel 3" };
+		CHECK(patch_copy_name::nameForCopy("Pedal Steel", taken, keepAll) == "Pedal Steel 4");
+	}
+	SUBCASE("a copy of a copy counts on") {
+		names = { "Pedal Steel", "Pedal Steel 2" };
+		CHECK(patch_copy_name::nameForCopy("Pedal Steel 2", taken, keepAll) == "Pedal Steel 3");
+	}
+	SUBCASE("a number that belongs to the name stays") {
+		names = { "Jupiter 8" };
+		CHECK(patch_copy_name::nameForCopy("Jupiter 8", taken, keepAll) == "Jupiter 8 2");
+	}
+	SUBCASE("long names are shortened so the number shows") {
+		names = { "V-sw Ster Guitar" };
+		CHECK(patch_copy_name::nameForCopy("V-sw Ster Guitar", taken, cutTo(16)) == "V-sw Ster Guit 2");
+		CHECK(patch_copy_name::nameForCopy("Steel Gtr", taken, cutTo(10)) == "Steel Gt 2"); // GR-50 tone names have 10 characters
+	}
+	SUBCASE("a shortened name in use moves on to the next number") {
+		names = { "V-sw Ster Guitar", "V-sw Ster Guit 2" };
+		CHECK(patch_copy_name::nameForCopy("V-sw Ster Guitar", taken, cutTo(16)) == "V-sw Ster Guit 3");
+	}
+	SUBCASE("trailing blanks from padded names are dropped") {
+		CHECK(patch_copy_name::nameForCopy("Bass    ", taken, keepAll) == "Bass 2");
+	}
+	SUBCASE("synths that change the name, e.g. to capitals, still get a number") {
+		auto upper = [](std::string name) { for (auto& c : name) c = (char)std::toupper((unsigned char)c); return name; };
+		names = { "BRASS", "BRASS 2" };
+		CHECK(patch_copy_name::nameForCopy("BRASS", taken, upper) == "BRASS 3");
+	}
+	SUBCASE("keeps the original name when no number fits") {
+		CHECK(patch_copy_name::nameForCopy("AB", taken, cutTo(2)) == "AB");
+		CHECK(patch_copy_name::nameForCopy("", taken, keepAll) == "");
+	}
 }

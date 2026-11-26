@@ -102,6 +102,7 @@ private:
 	int getTotalCount();
 	void selectPatchNow(midikraft::PatchHolder& patch, bool alsoSendToSynth);
 	void saveEditedPatchAndKeepPage();
+	void storeEditedCopy(midikraft::PatchHolder& edited);
 	void loadPage(int skip, int limit, midikraft::PatchFilter const& filter, std::function<void(std::vector<midikraft::PatchHolder>)> callback);
 
 	std::vector<midikraft::PatchHolder> autoCategorize(std::vector<midikraft::PatchHolder> const &patches);

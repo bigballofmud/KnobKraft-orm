@@ -5,6 +5,8 @@
 */
 
 #include "PatchView.h"
+
+#include "PatchCopyName.h"
 #include "PatchSelectionEvents.h"
 
 #include "PatchSearchComponent.h"
@@ -106,10 +108,9 @@ PatchView::PatchView(midikraft::PatchDatabase &database, std::vector<midikraft::
 	);
 	currentPatchDisplay_->onSaveEditedPatch = [this](std::shared_ptr<midikraft::PatchHolder> edited) {
 		if (!edited) return;
-		database_.putPatch(*edited);
-		spdlog::info("Saved edited patch '{}' as a new patch", edited->name());
-		// The synth already has the edited sound in its edit buffer, so only select it
-		selectPatch(*edited, false);
+		storeEditedCopy(*edited);
+		// The synth already has the edited sound in its edit buffer, so only select it. The edits are saved, so no need to ask.
+		selectPatchNow(*edited, false);
 		// Keep the list's order and show the page the copy landed on
 		auto filter = currentFilter();
 		patchButtons_->showPatchAt(database_.getPatchesCount(filter), database_.getPatchIndex(filter, *edited), edited->md5());
@@ -1199,12 +1200,24 @@ void PatchView::selectPatch(midikraft::PatchHolder &patch, bool alsoSendToSynth)
 	});
 }
 
+void PatchView::storeEditedCopy(midikraft::PatchHolder& edited)
+{
+	// Number the copy, "Pedal Steel" -> "Pedal Steel 2", so it can be told apart from the original in the library and on the synth
+	auto original = edited.name();
+	auto synthName = edited.synth() ? edited.synth()->getName() : std::string();
+	auto name = patch_copy_name::nameForCopy(original,
+		[this, &synthName](std::string const& candidate) { return database_.hasPatchNamed(synthName, candidate); },
+		[&edited](std::string const& candidate) { edited.setName(candidate); return edited.name(); });
+	edited.setName(name);
+	database_.putPatch(edited);
+	spdlog::info("Saved edited patch '{}' as new patch '{}'", original, edited.name());
+}
+
 void PatchView::saveEditedPatchAndKeepPage()
 {
 	auto edited = currentPatchDisplay_->makeEditedPatch();
 	if (!edited) return;
-	database_.putPatch(*edited);
-	spdlog::info("Saved edited patch '{}' as a new patch", edited->name());
+	storeEditedCopy(*edited);
 	// Stay on the page the user clicked on, only update the count and contents
 	patchButtons_->setTotalCount(getTotalCount(), false);
 	patchButtons_->refresh(true);

@@ -735,3 +735,19 @@ TEST_CASE("patch database finds a patch's position in the filtered, ordered list
 		CHECK(db.getPatchIndex(filter, patchOtherSynth) == -1);
 	}
 }
+
+TEST_CASE("patch database knows which names a synth's patches use") {
+	auto tmp = makeTempDatabasePath();
+	midikraft::PatchDatabase db(tmp.path().string(), midikraft::PatchDatabase::OpenMode::READ_WRITE);
+	auto synth = std::make_shared<DummySynth>("NameSynth", 4, 1);
+	auto otherSynth = std::make_shared<DummySynth>("OtherNameSynth", 4, 1);
+	auto source = std::make_shared<midikraft::FromFileSource>("names.syx", "/tmp/names.syx", MidiProgramNumber::invalidProgram());
+	db.putPatch(makeBankedPatch(synth, "Pedal Steel", 0, 0, 0x41, source));
+	db.putPatch(makeBankedPatch(otherSynth, "Brass", 0, 0, 0x42, source));
+
+	CHECK(db.hasPatchNamed("NameSynth", "Pedal Steel"));
+	CHECK_FALSE(db.hasPatchNamed("NameSynth", "Pedal"));      // Whole names only
+	CHECK_FALSE(db.hasPatchNamed("NameSynth", "Pedal Steel 2"));
+	CHECK_FALSE(db.hasPatchNamed("NameSynth", "Brass"));       // Another synth's patch
+	CHECK(db.hasPatchNamed("OtherNameSynth", "Brass"));
+}

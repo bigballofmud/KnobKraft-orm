@@ -112,8 +112,17 @@ void PatchEditSession::revert()
 std::shared_ptr<midikraft::PatchHolder> PatchEditSession::makeEditedPatch() const
 {
 	if (!isDirty()) return nullptr;
-	auto edited = std::make_shared<midikraft::PatchHolder>(original_->smartSynth(), original_->sourceInfo(), current_);
-	edited->setName(original_->name());
+	// Give the copy its own data, as renaming it may write into the bytes (synths that store the name in the patch).
+	// The database rebuilds patches the same way when loading them.
+	auto synth = original_->smartSynth();
+	auto copy = synth ? synth->patchFromPatchData(current_->data(), original_->patchNumber()) : nullptr;
+	if (!copy || copy->data() != current_->data()) {
+		spdlog::warn("Could not copy the edited patch {}", original_->name());
+		return nullptr;
+	}
+	auto edited = std::make_shared<midikraft::PatchHolder>(synth, original_->sourceInfo(), copy);
+	// The data already carries the name on synths that store it; setting it again could re-encode the bytes
+	if (edited->name() != original_->name()) edited->setName(original_->name());
 	edited->setPatchNumber(original_->patchNumber());
 	edited->setBank(original_->bankNumber());
 	edited->setFavorite(original_->howFavorite());
