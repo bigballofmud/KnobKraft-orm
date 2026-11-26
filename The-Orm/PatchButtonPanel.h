@@ -47,6 +47,9 @@ public:
 	void pageDown(bool selectLast);
 
 	void jumpToPage(int pagenumber);
+	// Sets the total and shows the page holding the patch at index (zero-based in the whole list), marking it active.
+	// An index of -1 shows the first page.
+	void showPatchAt(int totalCount, int index, std::string const& md5);
 
 private:
 	enum class SliderAxis {

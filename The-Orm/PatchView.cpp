@@ -108,9 +108,12 @@ PatchView::PatchView(midikraft::PatchDatabase &database, std::vector<midikraft::
 		if (!edited) return;
 		database_.putPatch(*edited);
 		spdlog::info("Saved edited patch '{}' as a new patch", edited->name());
-		retrieveFirstPageFromDatabase();
 		// The synth already has the edited sound in its edit buffer, so only select it
 		selectPatch(*edited, false);
+		// Keep the list's order and show the page the copy landed on
+		auto filter = currentFilter();
+		patchButtons_->showPatchAt(database_.getPatchesCount(filter), database_.getPatchIndex(filter, *edited), edited->md5());
+		::Data::instance().getEphemeral().setProperty(EPROPERTY_LIBRARY_PATCH_LIST, juce::Uuid().toString(), nullptr);
 	};
 	currentPatchDisplay_->onCurrentPatchClicked = [this](std::shared_ptr<midikraft::PatchHolder> patch) {
 		if (patch) {

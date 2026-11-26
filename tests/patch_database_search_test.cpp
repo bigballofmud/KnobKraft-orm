@@ -678,3 +678,60 @@ TEST_CASE("patch database duplicate-name filter honors list scope and synth part
 	REQUIRE(result.size() == 2);
 	CHECK(result[0].md5() != result[1].md5());
 }
+
+TEST_CASE("patch database finds a patch's position in the filtered, ordered list") {
+	auto tmp = makeTempDatabasePath();
+	midikraft::PatchDatabase db(tmp.path().string(), midikraft::PatchDatabase::OpenMode::READ_WRITE);
+
+	auto synth = std::make_shared<DummySynth>("IndexSynth", 4, 2);
+	auto otherSynth = std::make_shared<DummySynth>("OtherIndexSynth", 4, 2);
+	auto importSource = std::make_shared<midikraft::FromFileSource>("index.syx", "/tmp/index.syx", MidiProgramNumber::invalidProgram());
+
+	auto patchFirst = makeBankedPatch(synth, "Zulu", 0, 0, 0x31, importSource);
+	auto patchSecond = makeBankedPatch(synth, "Alpha", 0, 1, 0x32, importSource);
+	auto patchThird = makeBankedPatch(synth, "Mike", 0, 2, 0x33, importSource);
+	// Like a patch saved from the parameter editor: same name and place as an imported one, but in no import list
+	auto patchEdited = makeBankedPatch(synth, "Alpha", 0, 1, 0x34, importSource);
+	// Same data as patchSecond, but for another synth, so only the synth tells them apart
+	auto patchOtherSynth = makeBankedPatch(otherSynth, "Alpha", 0, 1, 0x32, importSource);
+
+	for (auto const& patch : { patchFirst, patchSecond, patchThird, patchEdited, patchOtherSynth }) {
+		db.putPatch(patch);
+	}
+	db.createImportLists({ patchFirst, patchSecond, patchThird });
+
+	std::vector<std::shared_ptr<midikraft::Synth>> synths = { synth };
+	auto checkMatchesGetPatches = [&db](midikraft::PatchFilter const& filter) {
+		auto listed = db.getPatches(filter, 0, -1);
+		for (size_t i = 0; i < listed.size(); ++i) {
+			CAPTURE(i);
+			CHECK(db.getPatchIndex(filter, listed[i]) == (int)i);
+		}
+	};
+
+	SUBCASE("import order puts the edited copy last") {
+		auto filter = midikraft::PatchFilter(synths);
+		filter.orderBy = midikraft::PatchOrdering::Order_by_Import_id;
+		checkMatchesGetPatches(filter);
+		CHECK(db.getPatchIndex(filter, patchSecond) == 1);
+		CHECK(db.getPatchIndex(filter, patchEdited) == 3);
+	}
+
+	SUBCASE("name order") {
+		auto filter = midikraft::PatchFilter(synths);
+		filter.orderBy = midikraft::PatchOrdering::Order_by_Name;
+		checkMatchesGetPatches(filter);
+		CHECK(db.getPatchIndex(filter, patchFirst) == 3);
+	}
+
+	SUBCASE("patches the filter excludes are not found") {
+		auto filter = midikraft::PatchFilter(synths);
+		filter.orderBy = midikraft::PatchOrdering::Order_by_Import_id;
+		filter.name = "Mike";
+		checkMatchesGetPatches(filter);
+		CHECK(db.getPatchIndex(filter, patchThird) == 0);
+		CHECK(db.getPatchIndex(filter, patchSecond) == -1);
+		filter.name = "";
+		CHECK(db.getPatchIndex(filter, patchOtherSynth) == -1);
+	}
+}

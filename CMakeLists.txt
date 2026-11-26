@@ -406,6 +406,11 @@ if(BUILD_UNIT_TESTS)
 		knobkraft-generic-adaptation
 		midikraft-access-virus
 		SQLiteCpp)
+	if(APPLE)
+		# The tests use std::filesystem, which macOS only provides from 10.15
+		target_compile_options(patch_database_migration_test PRIVATE -mmacosx-version-min=10.15)
+		target_link_options(patch_database_migration_test PRIVATE -mmacosx-version-min=10.15)
+	endif()
 
 	add_executable(patch_text_test
 		tests/patch_text_test.cpp

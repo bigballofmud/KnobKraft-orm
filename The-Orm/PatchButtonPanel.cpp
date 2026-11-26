@@ -441,6 +441,17 @@ void PatchButtonPanel::jumpToPage(int pagenumber) {
 	}
 }
 
+void PatchButtonPanel::showPatchAt(int totalCount, int index, std::string const& md5) {
+	setTotalCount(totalCount, true);
+	if (index >= 0 && index < totalCount && pageSize_ > 0) {
+		pageNumber_ = index / pageSize_;
+		pageBase_ = pageNumber_ * pageSize_;
+		activePatchMd5_ = md5;
+	}
+	setupPageButtons();
+	refresh(true);
+}
+
 void PatchButtonPanel::changeListenerCallback(ChangeBroadcaster* source)
 {
 	if (source == &UIModel::instance()->thumbnails_) {
