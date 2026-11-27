@@ -16,3 +16,6 @@ public/
 
 .venv/
 site/
+
+# Vendor manuals downloaded for reference (see docs/manuals.md); not redistributed
+/*.pdf
