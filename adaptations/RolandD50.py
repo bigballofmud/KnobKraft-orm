@@ -499,6 +499,269 @@ d_50 = NonGenericRoland("Roland D-50",
 d_50.install(this_module)
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# Parameter grid: getPatchParameters / setPatchParameters
+#
+# Offsets, ranges and value texts follow the D-50 MIDI Implementation (Roland), sections *4-4 (partial block),
+# *4-5 (common block) and *4-6 (patch block). A patch is 7 blocks of 64 bytes, in this order. The tone and patch
+# names are left to renamePatch, and the "Extension (for future)" bytes are not shown.
+# ---------------------------------------------------------------------------------------------------------------------
+
+_NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+
+def _raw(value: int) -> str:
+    return str(value)
+
+
+def _offset(base: int):
+    def text(value: int) -> str:
+        shown = value - base
+        return f"+{shown}" if shown > 0 else str(shown)
+    return text
+
+
+def _plus(amount: int):
+    return lambda value: str(value + amount)
+
+
+def _choices(*names: str):
+    def text(value: int) -> str:
+        return names[value] if 0 <= value < len(names) else str(value)
+    text.options = list(names)
+    return text
+
+
+def _note(first_semitone: int):
+    """Note names counted from a starting note, as semitones above C1 (C1 = 0)."""
+    def text(value: int) -> str:
+        semitone = first_semitone + value
+        return f"{_NOTES[semitone % 12]}{1 + semitone // 12}"
+    return text
+
+
+def _bias_point(value: int) -> str:
+    # 0-63: below A1-C7 ("<"), 64-127: above A1-C7 (">")
+    direction = "<" if value < 64 else ">"
+    return direction + _note(9)(value % 64)
+
+
+_KEYFOLLOW_PITCH = _choices("-1", "-1/2", "-1/4", "0", "1/8", "1/4", "3/8", "1/2", "5/8", "3/4", "7/8", "1", "5/4", "3/2", "2", "s1", "s2")
+_KEYFOLLOW_TVF = _choices("-1", "-1/2", "-1/4", "0", "1/8", "1/4", "3/8", "1/2", "5/8", "3/4", "7/8", "1", "5/4", "3/2", "2")
+_LFO_SELECT = _choices("+1", "-1", "+2", "-2", "+3", "-3")
+_LFO_WAVE = _choices("TRI", "SAW", "SQU", "RND")
+_END_LEVEL = _choices("0", "100")
+_PLUS_MINUS_7 = _offset(7)
+_PLUS_MINUS_12 = _offset(12)
+_PLUS_MINUS_50 = _offset(50)
+
+# (offset, name, max, formatter)
+_D50_PARTIAL = [
+    (0, "WG pitch coarse", 72, _note(0)),
+    (1, "WG pitch fine", 100, _PLUS_MINUS_50),
+    (2, "WG pitch keyfollow", 16, _KEYFOLLOW_PITCH),
+    (3, "WG mod LFO mode", 3, _choices("OFF", "(+)", "(-)", "A&L")),
+    (4, "WG mod P-ENV mode", 2, _choices("OFF", "(+)", "(-)")),
+    (5, "WG mod bend mode", 2, _choices("OFF", "Keyfollow", "Normal")),
+    (6, "WG waveform", 1, _choices("Square", "Sawtooth")),
+    (7, "WG PCM wave no.", 99, _plus(1)),
+    (8, "WG pulse width", 100, _raw),
+    (9, "WG PW velocity range", 14, _PLUS_MINUS_7),
+    (10, "WG PW LFO select", 5, _LFO_SELECT),
+    (11, "WG PW LFO depth", 100, _raw),
+    (12, "WG PW aftertouch range", 14, _PLUS_MINUS_7),
+    (13, "TVF cutoff frequency", 100, _raw),
+    (14, "TVF resonance", 30, _raw),
+    (15, "TVF keyfollow", 14, _KEYFOLLOW_TVF),
+    (16, "TVF bias point/dir", 127, _bias_point),
+    (17, "TVF bias level", 14, _PLUS_MINUS_7),
+    (18, "TVF ENV depth", 100, _raw),
+    (19, "TVF ENV velocity range", 100, _raw),
+    (20, "TVF ENV depth keyfollow", 4, _raw),
+    (21, "TVF ENV time keyfollow", 4, _raw),
+    (22, "TVF ENV time 1", 100, _raw),
+    (23, "TVF ENV time 2", 100, _raw),
+    (24, "TVF ENV time 3", 100, _raw),
+    (25, "TVF ENV time 4", 100, _raw),
+    (26, "TVF ENV time 5", 100, _raw),
+    (27, "TVF ENV level 1", 100, _raw),
+    (28, "TVF ENV level 2", 100, _raw),
+    (29, "TVF ENV level 3", 100, _raw),
+    (30, "TVF ENV sustain level", 100, _raw),
+    (31, "TVF ENV end level", 1, _END_LEVEL),
+    (32, "TVF mod LFO select", 5, _LFO_SELECT),
+    (33, "TVF mod LFO depth", 100, _raw),
+    (34, "TVF mod aftertouch range", 14, _PLUS_MINUS_7),
+    (35, "TVA level", 100, _raw),
+    (36, "TVA velocity range", 100, _PLUS_MINUS_50),
+    (37, "TVA bias point", 127, _bias_point),
+    (38, "TVA bias level", 12, _offset(12)),  # -12 to 0
+    (39, "TVA ENV time 1", 100, _raw),
+    (40, "TVA ENV time 2", 100, _raw),
+    (41, "TVA ENV time 3", 100, _raw),
+    (42, "TVA ENV time 4", 100, _raw),
+    (43, "TVA ENV time 5", 100, _raw),
+    (44, "TVA ENV level 1", 100, _raw),
+    (45, "TVA ENV level 2", 100, _raw),
+    (46, "TVA ENV level 3", 100, _raw),
+    (47, "TVA ENV sustain level", 100, _raw),
+    (48, "TVA ENV end level", 1, _END_LEVEL),
+    (49, "TVA ENV velocity follow", 4, _raw),
+    (50, "TVA ENV time keyfollow", 4, _raw),
+    (51, "TVA mod LFO select", 5, _LFO_SELECT),
+    (52, "TVA mod LFO depth", 100, _raw),
+    (53, "TVA mod aftertouch range", 14, _PLUS_MINUS_7),
+]
+
+_D50_COMMON = [
+    (10, "Structure", 6, _plus(1)),
+    (11, "P-ENV velocity range", 2, _raw),
+    (12, "P-ENV time keyfollow", 4, _raw),
+    (13, "P-ENV time 1", 50, _raw),
+    (14, "P-ENV time 2", 50, _raw),
+    (15, "P-ENV time 3", 50, _raw),
+    (16, "P-ENV time 4", 50, _raw),
+    (17, "P-ENV level 0", 100, _PLUS_MINUS_50),
+    (18, "P-ENV level 1", 100, _PLUS_MINUS_50),
+    (19, "P-ENV level 2", 100, _PLUS_MINUS_50),
+    (20, "P-ENV sustain level", 100, _PLUS_MINUS_50),
+    (21, "P-ENV end level", 100, _PLUS_MINUS_50),
+    (22, "P-mod LFO depth", 100, _raw),
+    (23, "P-mod lever", 100, _raw),
+    (24, "P-mod aftertouch", 100, _raw),
+    (25, "LFO-1 waveform", 3, _LFO_WAVE),
+    (26, "LFO-1 rate", 100, _raw),
+    (27, "LFO-1 delay time", 100, _raw),
+    (28, "LFO-1 sync", 2, _choices("OFF", "ON", "KEY")),
+    (29, "LFO-2 waveform", 3, _LFO_WAVE),
+    (30, "LFO-2 rate", 100, _raw),
+    (31, "LFO-2 delay time", 100, _raw),
+    (32, "LFO-2 sync", 1, _choices("OFF", "ON")),
+    (33, "LFO-3 waveform", 3, _LFO_WAVE),
+    (34, "LFO-3 rate", 100, _raw),
+    (35, "LFO-3 delay time", 100, _raw),
+    (36, "LFO-3 sync", 1, _choices("OFF", "ON")),
+    (37, "Low EQ frequency", 15, _choices("63", "75", "88", "105", "125", "150", "175", "210", "250", "300", "350", "420",
+                                          "500", "600", "700", "840")),
+    (38, "Low EQ gain", 24, _PLUS_MINUS_12),
+    # The manual's table names offset 39 "Low EQ Frequency" too, but its values (250 Hz to 9.5 kHz) are the high EQ's
+    (39, "High EQ frequency", 21, _choices("250", "300", "350", "420", "500", "600", "700", "840", "1.0k", "1.2k", "1.4k",
+                                           "1.7k", "2.0k", "2.4k", "2.8k", "3.4k", "4.0k", "4.8k", "5.7k", "6.7k", "8.0k", "9.5k")),
+    (40, "High EQ Q", 8, _choices("0.3", "0.5", "0.7", "1.0", "1.4", "2.0", "3.0", "4.2", "6.0")),
+    (41, "High EQ gain", 24, _PLUS_MINUS_12),
+    (42, "Chorus type", 7, _plus(1)),
+    (43, "Chorus rate", 100, _raw),
+    (44, "Chorus depth", 100, _raw),
+    (45, "Chorus balance", 100, _raw),
+    (46, "Partial mute", 3, _choices("00", "01", "10", "11")),
+    (47, "Partial balance", 100, _raw),
+]
+
+_D50_PATCH = [
+    (18, "Key mode", 8, _choices("Whole", "Dual", "Split", "Separate", "Whole-S", "Dual-S", "Split-US", "Split-LS", "Separate-S")),
+    (19, "Split point", 60, _note(12)),  # C2 to C7
+    (20, "Portamento mode", 2, _choices("U", "L", "UL")),
+    (21, "Hold mode", 2, _choices("U", "L", "UL")),
+    (22, "Upper tone key shift", 48, _offset(24)),
+    (23, "Lower tone key shift", 48, _offset(24)),
+    (24, "Upper tone fine tune", 100, _PLUS_MINUS_50),
+    (25, "Lower tone fine tune", 100, _PLUS_MINUS_50),
+    (26, "Bender range", 12, _raw),
+    (27, "Aftertouch bend range", 24, _PLUS_MINUS_12),
+    (28, "Portamento time", 100, _raw),
+    (29, "Output mode", 3, _plus(1)),
+    (30, "Reverb type", 31, _plus(1)),
+    (31, "Reverb balance", 100, _raw),
+    (32, "Total volume", 100, _raw),
+    (33, "Tone balance", 100, _raw),
+    (34, "Chase mode", 2, _choices("UL", "ULL", "ULU")),
+    (35, "Chase level", 100, _raw),
+    (36, "Chase time", 100, _raw),
+    (37, "MIDI transmit channel", 16, lambda v: "Basic CH" if v == 0 else str(v)),
+    (38, "MIDI separate receive channel", 16, lambda v: "OFF" if v == 0 else str(v)),
+    (39, "MIDI transmit program change", 100, lambda v: "OFF" if v == 0 else str(v)),
+]
+
+_D50_BLOCK_SIZE = 0x40
+# Grid order: the patch settings first, then each tone's common settings and its two partials
+_D50_SECTIONS = [
+    (6, "Patch", "patch", _D50_PATCH),
+    (2, "Upper common", "upper.common", _D50_COMMON),
+    (0, "Upper partial 1", "upper.partial1", _D50_PARTIAL),
+    (1, "Upper partial 2", "upper.partial2", _D50_PARTIAL),
+    (5, "Lower common", "lower.common", _D50_COMMON),
+    (3, "Lower partial 1", "lower.partial1", _D50_PARTIAL),
+    (4, "Lower partial 2", "lower.partial2", _D50_PARTIAL),
+]
+
+
+def _d50_layout():
+    """(id, name, group, block number, offset in block, max, formatter)"""
+    result = []
+    for block, group, prefix, table in _D50_SECTIONS:
+        for offset, name, max_value, formatter in table:
+            parameter_id = prefix + "." + name.lower().replace(" ", "_").replace(".", "").replace("/", "_")
+            result.append((parameter_id, name, group, block, offset, max_value, formatter))
+    return result
+
+
+_D50_LAYOUT = _d50_layout()
+
+
+def _d50_blocks(messages: List[int]) -> Optional[Tuple[List[Tuple[int, int]], List[List[int]]]]:
+    """The 7 blocks of an edit buffer or program dump, with each message's position, or None for other data."""
+    if not (d_50.isEditBufferDump(messages) or d_50.isSingleProgramDump(messages)):
+        return None
+    positions = knobkraft.sysex.findSysexDelimiters(messages, len(_d50_patch_data))
+    blocks = []
+    for start, end in positions:
+        _, _, data = d_50.parseRolandMessage(messages[start:end])
+        if len(data) != _D50_BLOCK_SIZE:
+            return None
+        blocks.append(list(data))
+    return (positions, blocks) if len(blocks) == len(_d50_patch_data) else None
+
+
+@knobkraft_api
+def getPatchParameters(messages: List[int]) -> List[Dict]:
+    found = _d50_blocks(messages)
+    if found is None:
+        return []
+    _, blocks = found
+    result = []
+    for parameter_id, name, group, block, offset, max_value, formatter in _D50_LAYOUT:
+        value = blocks[block][offset]
+        parameter = {"id": parameter_id, "name": name, "group": group, "value": value, "min": 0, "max": max_value,
+                     "text": formatter(value)}
+        if hasattr(formatter, "options"):
+            parameter["options"] = formatter.options
+        result.append(parameter)
+    return result
+
+
+@knobkraft_api
+def setPatchParameters(messages: List[int], values: Dict[str, int]) -> List[int]:
+    """The same messages with the given raw values written in and their checksums updated."""
+    found = _d50_blocks(messages)
+    if found is None:
+        raise ValueError("Not a D-50 edit buffer or program dump")
+    positions, blocks = found
+    by_id = {entry[0]: entry for entry in _D50_LAYOUT}
+    for parameter_id, value in values.items():
+        if parameter_id not in by_id:
+            raise ValueError(f"Unknown D-50 parameter '{parameter_id}'")
+        _, _, _, block, offset, max_value, _ = by_id[parameter_id]
+        if not 0 <= value <= max_value:
+            raise ValueError(f"Value {value} out of range 0..{max_value} for '{parameter_id}'")
+        blocks[block][offset] = value
+    result = list(messages)
+    data_start = d_50._checksum_start() + d_50.address_size
+    for (start, end), data in zip(positions, blocks):
+        result[start + data_start:start + data_start + len(data)] = data
+        result[end - 2] = d_50.roland_checksum(result[start + d_50._checksum_start():end - 2])
+    return result
+
+
 def old_createDeviceDetectMessage(channel):
     # Just request the upper common block from the edit buffer - if we get a reply, there is a D-50
     # Command is RQ1 = 0x11, the address is 0 1 0, the size is 0x40 for one block
