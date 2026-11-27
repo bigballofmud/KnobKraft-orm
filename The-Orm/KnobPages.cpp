@@ -56,17 +56,29 @@ namespace knob_pages {
 			idsByGroup[parameter.group].push_back(parameter.id);
 		}
 
+		// A first section that fits the top row stays there on every page (the GR-50's Common), and the pages
+		// use the three rows below. Otherwise pages use all knobs.
+		std::vector<std::string> pinned;
+		if (order.size() > 1 && idsByGroup[order.front()].size() <= kTopRowKnobs) {
+			pinned = idsByGroup[order.front()];
+			order.erase(order.begin());
+		}
+		size_t firstKnob = pinned.empty() ? 0 : kTopRowKnobs;
+		size_t perPage = static_cast<size_t>(kKnobsPerPage) - firstKnob;
+
 		std::vector<Page> result;
 		for (auto const& group : order) {
 			auto const& ids = idsByGroup[group];
-			auto count = (ids.size() + kKnobsPerPage - 1) / kKnobsPerPage;
+			auto count = (ids.size() + perPage - 1) / perPage;
 			std::string title = group.empty() ? "Parameters" : group;
 			for (size_t i = 0; i < count; ++i) {
 				Page page;
 				page.title = count > 1 ? fmt::format("{} ({}/{})", title, i + 1, count) : title;
-				auto begin = ids.begin() + static_cast<std::ptrdiff_t>(i * kKnobsPerPage);
-				auto end = ids.begin() + static_cast<std::ptrdiff_t>(std::min(ids.size(), (i + 1) * kKnobsPerPage));
-				page.ids.assign(begin, end);
+				page.ids = pinned;
+				page.ids.resize(firstKnob);
+				auto begin = ids.begin() + static_cast<std::ptrdiff_t>(i * perPage);
+				auto end = ids.begin() + static_cast<std::ptrdiff_t>(std::min(ids.size(), (i + 1) * perPage));
+				page.ids.insert(page.ids.end(), begin, end);
 				result.push_back(page);
 			}
 		}

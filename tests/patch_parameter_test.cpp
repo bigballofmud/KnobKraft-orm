@@ -288,22 +288,55 @@ TEST_CASE("BCR2000 pages follow the grid sections, 32 knobs at most") {
 	parameters.push_back(knobParameter("s0", "String 1", 0, 1));
 
 	auto pages = knob_pages::makePages(parameters);
-	REQUIRE(pages.size() == 4);
-	CHECK(pages[0].title == "Common");
-	CHECK(pages[0].ids == std::vector<std::string>{ "c0", "c1", "c2", "c3" });
-	CHECK(pages[1].title == "Partial 1 (1/2)");
-	CHECK(pages[1].ids.size() == 32);
-	CHECK(pages[1].ids.front() == "p0");
-	CHECK(pages[2].title == "Partial 1 (2/2)");
-	CHECK(pages[2].ids.size() == 8);
-	CHECK(pages[2].ids.front() == "p32");
-	CHECK(pages[3].title == "String 1");
+	// Common fits the top row, so it stays there and the pages use the 24 knobs below
+	REQUIRE(pages.size() == 3);
+	std::vector<std::string> common{ "c0", "c1", "c2", "c3", "", "", "", "" };
+	for (auto const& page : pages) {
+		CAPTURE(page.title);
+		REQUIRE(page.ids.size() > 8);
+		CHECK(std::vector<std::string>(page.ids.begin(), page.ids.begin() + 8) == common);
+	}
+	CHECK(pages[0].title == "Partial 1 (1/2)");
+	CHECK(pages[0].ids.size() == 32);
+	CHECK(pages[0].ids[8] == "p0");
+	CHECK(pages[0].ids[31] == "p23");
+	CHECK(pages[1].title == "Partial 1 (2/2)");
+	CHECK(pages[1].ids.size() == 8 + 16);
+	CHECK(pages[1].ids[8] == "p24");
+	CHECK(pages[2].title == "String 1");
+	CHECK(pages[2].ids[8] == "s0");
+
+	// On the BCR2000: Common on the top row, the page from the first encoder of the rows below
+	auto bcl = knob_pages::pageBcl(pages[0], parameters);
+	CHECK(bcl.find("$encoder 1\n  .easypar CC 16 1 0 7 absolute") != std::string::npos);
+	CHECK(bcl.find("$encoder 5\n  .easypar CC 16 5 0 0 absolute\n  .mode off") != std::string::npos);
+	CHECK(bcl.find("$encoder 33\n  .easypar CC 16 9 0 100 absolute") != std::string::npos);
 
 	// Another patch keeps the page by title, else the position
-	CHECK(knob_pages::pageIndexFor(pages, "String 1", 0) == 3);
-	CHECK(knob_pages::pageIndexFor(pages, "Partial 7", 2) == 2);
-	CHECK(knob_pages::pageIndexFor(pages, "Partial 7", 9) == 3);
+	CHECK(knob_pages::pageIndexFor(pages, "String 1", 0) == 2);
+	CHECK(knob_pages::pageIndexFor(pages, "Partial 7", 1) == 1);
+	CHECK(knob_pages::pageIndexFor(pages, "Partial 7", 9) == 2);
 	CHECK(knob_pages::pageIndexFor({}, "Common", 0) == -1);
+}
+
+TEST_CASE("BCR2000 pages use all knobs when the first section doesn't fit the top row") {
+	midikraft::PatchParameters parameters;
+	for (int i = 0; i < 9; ++i) parameters.push_back(knobParameter("u" + std::to_string(i), "Upper", 0, 100));
+	for (int i = 0; i < 40; ++i) parameters.push_back(knobParameter("l" + std::to_string(i), "Lower", 0, 100));
+	auto pages = knob_pages::makePages(parameters);
+	REQUIRE(pages.size() == 3);
+	CHECK(pages[0].title == "Upper");
+	CHECK(pages[0].ids.size() == 9);
+	CHECK(pages[0].ids[0] == "u0");
+	CHECK(pages[1].title == "Lower (1/2)");
+	CHECK(pages[1].ids.size() == 32);
+	CHECK(pages[2].ids.size() == 8);
+
+	// A single small section isn't pinned either: it is the only page
+	midikraft::PatchParameters single{ knobParameter("a", "Common", 0, 7) };
+	auto onePage = knob_pages::makePages(single);
+	REQUIRE(onePage.size() == 1);
+	CHECK(onePage[0].ids == std::vector<std::string>{ "a" });
 }
 
 TEST_CASE("BCR2000 knobs are the top row, then the three rows below") {

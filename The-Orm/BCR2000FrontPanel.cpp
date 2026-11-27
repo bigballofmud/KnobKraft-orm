@@ -122,7 +122,7 @@ midikraft::PatchParameter const* BCR2000FrontPanel::parameterOnKnob(int knob) co
 {
 	if (pageIndex_ < 0 || knob < 0) return nullptr;
 	auto const& ids = pages_[static_cast<size_t>(pageIndex_)].ids;
-	if (static_cast<size_t>(knob) >= ids.size()) return nullptr;
+	if (static_cast<size_t>(knob) >= ids.size() || ids[static_cast<size_t>(knob)].empty()) return nullptr;
 	for (auto const& parameter : parameters_) {
 		if (parameter.id == ids[static_cast<size_t>(knob)]) return &parameter;
 	}
@@ -134,7 +134,9 @@ std::map<std::string, int> BCR2000FrontPanel::knobAssignments() const
 	std::map<std::string, int> result;
 	if (bcr_.expired() || pageIndex_ < 0) return result;
 	auto const& ids = pages_[static_cast<size_t>(pageIndex_)].ids;
-	for (size_t i = 0; i < ids.size(); ++i) result[ids[i]] = static_cast<int>(i) + 1;
+	for (size_t i = 0; i < ids.size(); ++i) {
+		if (!ids[i].empty()) result[ids[i]] = static_cast<int>(i) + 1;
+	}
 	return result;
 }
 
