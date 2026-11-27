@@ -161,7 +161,7 @@ void PatchParameterGrid::paint(Graphics& g)
 	auto text = getLookAndFeel().findColour(Label::textColourId);
 	auto cellColour = background.contrasting(0.06f);
 	auto changedColour = getLookAndFeel().findColour(Slider::thumbColourId);
-	auto knobColour = getLookAndFeel().findColour(TextButton::buttonOnColourId);
+	auto knobColour = Colour(0xff4f86b0); // Muted steel blue, apart from the accent used for changed cells
 
 	std::vector<std::pair<String, Rectangle<int>>> headers;
 	auto cells = layoutCells(getWidth(), &headers, nullptr);
@@ -175,13 +175,14 @@ void PatchParameterGrid::paint(Graphics& g)
 	for (auto const& cell : cells) {
 		auto const& parameter = parameters_[cell.index];
 		auto area = cell.bounds;
-		g.setColour(cellColour);
+		auto knob = knobs_.find(parameter.id);
+		// Cells on the BCR2000's knobs get a quiet tint of the badge colour, so the page stands out without shouting
+		g.setColour(knob != knobs_.end() ? cellColour.interpolatedWith(knobColour, 0.38f) : cellColour);
 		g.fillRoundedRectangle(area.toFloat(), 4.0f);
 		if (changedIds_.count(parameter.id)) {
 			g.setColour(changedColour);
 			g.drawRoundedRectangle(area.toFloat().reduced(0.75f), 4.0f, 1.5f);
 		}
-		auto knob = knobs_.find(parameter.id);
 		if (knob != knobs_.end()) {
 			// A small badge with the knob number in the top right corner
 			auto badge = Rectangle<float>(static_cast<float>(area.getRight() - 22), static_cast<float>(area.getY() + 3), 19.0f, 13.0f);
