@@ -198,3 +198,29 @@ TEST_CASE("Saved copies get the lowest free number that fits the synth") {
 		CHECK(patch_copy_name::nameForCopy("", taken, keepAll) == "");
 	}
 }
+
+TEST_CASE("Live sends wait as long as the synth needs for the messages") {
+	using patch_edit_timing::kMinSendIntervalMs;
+	using patch_edit_timing::sendIntervalMs;
+	auto sysexOfSize = [](int totalBytes) {
+		std::vector<uint8> payload(static_cast<size_t>(totalBytes - 2), 0x01); // F0 and F7 are added
+		return juce::MidiMessage::createSysExMessage(payload.data(), static_cast<int>(payload.size()));
+	};
+
+	// Small dumps at full speed keep the minimum interval
+	CHECK(sendIntervalMs({}, 0) == kMinSendIntervalMs);
+	CHECK(sendIntervalMs({ sysexOfSize(275) }, 0) == kMinSendIntervalMs); // Matrix 1000: 88 ms on the wire
+
+	// A GR-50 patch: one 198-byte DT1 after the adaptation's 100 ms pause, 64 ms on the wire, plus 50 ms
+	CHECK(sendIntervalMs({ sysexOfSize(198) }, 100) == 100 + 64 + 50);
+
+	// Each message gets its pause; big dumps are paced by the wire (a Rev2 program is about 1 KB at 31250 baud)
+	CHECK(sendIntervalMs({ sysexOfSize(100), sysexOfSize(100), sysexOfSize(100) }, 30) == 90 + 96 + 50);
+	CHECK(sendIntervalMs({ sysexOfSize(1000) }, 0) == 320 + 50);
+
+	// A negative delay from a broken adaptation counts as none
+	CHECK(sendIntervalMs({ sysexOfSize(1000) }, -500) == 320 + 50);
+
+	// Native synths send at full speed unless they say otherwise
+	CHECK(std::make_shared<midikraft::Matrix1000>()->generalMessageDelayMs() == 0);
+}

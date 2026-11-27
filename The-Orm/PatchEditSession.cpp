@@ -2,13 +2,29 @@
 
 #include "Capability.h"
 #include "MidiLocationCapability.h"
+#include "UploadHandshakeCapability.h"
+#include "UploadSequence.h"
 #include "PatchParameterViews.h"
 
 #include <spdlog/spdlog.h>
 
-namespace {
-	// Minimum time between two sends of the edited patch, so a fast drag doesn't flood older synths
-	constexpr int kSendIntervalMs = 150;
+#include <algorithm>
+
+namespace patch_edit_timing {
+	namespace {
+		constexpr long long kMicrosecondsPerMidiByte = 320; // 10 bits at 31250 baud
+		constexpr int kDigestMs = 50;
+	}
+
+	int sendIntervalMs(std::vector<juce::MidiMessage> const& messages, int delayPerMessageMs)
+	{
+		long long microseconds = 0;
+		for (auto const& message : messages) {
+			microseconds += 1000LL * std::max(0, delayPerMessageMs) + kMicrosecondsPerMidiByte * message.getRawDataSize();
+		}
+		auto needed = static_cast<int>((microseconds + 999) / 1000) + kDigestMs;
+		return std::max(kMinSendIntervalMs, needed);
+	}
 }
 
 PatchEditSession::~PatchEditSession()
@@ -138,31 +154,54 @@ void PatchEditSession::scheduleSend()
 {
 	sendPending_ = true;
 	if (!isTimerRunning()) {
-		// Send the first change at once, then at most every kSendIntervalMs, ending with the latest state
-		sendNow();
-		startTimer(kSendIntervalMs);
+		// Send the first change at once, then no faster than the synth can take it, ending with the latest state
+		startTimer(sendNow());
 	}
 }
 
 void PatchEditSession::timerCallback()
 {
 	if (sendPending_) {
-		sendNow();
+		auto interval = sendNow();
+		if (interval != getTimerInterval()) startTimer(interval);
 	}
 	else {
 		stopTimer();
 	}
 }
 
-void PatchEditSession::sendNow()
+int PatchEditSession::sendNow()
 {
 	sendPending_ = false;
-	if (!original_ || !current_) return;
+	if (!original_ || !current_) return patch_edit_timing::kMinSendIntervalMs;
 	auto synth = original_->smartSynth();
 	auto location = midikraft::Capability::hasCapability<midikraft::MidiLocationCapability>(synth);
 	if (!location || !location->channel().isValid()) {
 		spdlog::debug("{} not detected, edit not sent", synth ? synth->getName() : "Synth");
-		return;
+		return patch_edit_timing::kMinSendIntervalMs;
 	}
-	synth->sendDataFileToSynth(current_, nullptr);
+	auto messages = synth->dataFileToSysex(current_, nullptr);
+	if (messages.empty()) {
+		spdlog::warn("{} produced no MIDI messages for the edited patch", synth->getName());
+		return patch_edit_timing::kMinSendIntervalMs;
+	}
+	auto interval = patch_edit_timing::sendIntervalMs(messages, synth->generalMessageDelayMs());
+	if (!midikraft::Capability::hasCapability<midikraft::UploadHandshakeCapability>(synth)) {
+		// The synth's own send, as some (Kawai K3) treat parts of the dump specially
+		synth->sendDataFileToSynth(current_, nullptr);
+		return interval;
+	}
+	// A synth with an upload handshake refuses a send while the previous one is still running; try again next tick
+	// rather than losing the latest edit. The flag outlives this session in case the result arrives late.
+	auto busy = std::make_shared<bool>(false);
+	synth->sendMessagesToSynthWithUploadHandshake(std::move(messages), [busy, synthName = synth->getName()](midikraft::UploadResult const& result) {
+		if (result.status == midikraft::UploadResult::Status::BUSY) {
+			*busy = true;
+		}
+		else if (!result.successful()) {
+			spdlog::error("Sending the edited patch to {} failed: {}", synthName, result.message);
+		}
+	});
+	if (*busy) sendPending_ = true;
+	return interval;
 }

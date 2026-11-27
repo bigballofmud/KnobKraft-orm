@@ -609,7 +609,7 @@ namespace knobkraft {
 		return false;
 	}
 
-	void GenericAdaptation::sendBlockOfMessagesToSynth(juce::MidiDeviceInfo const& midiOutput, std::vector<MidiMessage> const& buffer)
+	int GenericAdaptation::generalMessageDelayMs() const
 	{
 		int delay = 0;
 		bool handled = false;
@@ -651,12 +651,16 @@ namespace knobkraft {
 				}
 			}
 		}
-		// GIL released before the potentially long blocking send so that
-		// Python callbacks on other threads (e.g. isPartOfSingleProgramDump
-		// on the MIDI input thread for response chunks arriving mid-delay)
-		// are not starved for the full inter-message sleep duration.
+		return delay > 0 ? delay : 0;
+	}
 
-		if (handled && delay > 0) {
+	void GenericAdaptation::sendBlockOfMessagesToSynth(juce::MidiDeviceInfo const& midiOutput, std::vector<MidiMessage> const& buffer)
+	{
+		// Read before the potentially long blocking send, which runs without the GIL so that
+		// Python callbacks on other threads (e.g. isPartOfSingleProgramDump on the MIDI input
+		// thread for response chunks arriving mid-delay) are not starved for the full sleep.
+		int delay = generalMessageDelayMs();
+		if (delay > 0) {
 			midikraft::MidiController::instance()->getMidiOutput(midiOutput)->sendBlockOfMessagesThrottled(buffer, delay);
 			return;
 		}
