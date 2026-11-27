@@ -4,6 +4,7 @@
 
 #include "PatchParametersCapability.h"
 
+#include <map>
 #include <set>
 
 // Grid of labelled patch parameters, laid out in sections by group. When editable, dragging a number
@@ -15,6 +16,8 @@ public:
 
 	void setEditable(bool editable);
 	void setChangedIds(std::set<std::string> changedIds);
+	// Knob numbers of the parameters a hardware controller currently edits, by id, shown on their cells
+	void setKnobAssignments(std::map<std::string, int> knobs);
 
 	// Called with a parameter id and its new raw value
 	std::function<void(std::string const&, int)> onValueChanged;
@@ -49,6 +52,7 @@ private:
 	std::vector<Section> sections_;
 	bool editable_ = false;
 	std::set<std::string> changedIds_;
+	std::map<std::string, int> knobs_;
 
 	// Drag state, kept by id because the parameters are replaced after every change
 	std::string dragId_;

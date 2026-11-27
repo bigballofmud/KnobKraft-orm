@@ -60,6 +60,15 @@ PatchTextBox::PatchTextBox(std::function<void()> forceResize, bool showParams /*
 	};
 	addChildComponent(revertEdits_);
 
+	frontPanel_.onKnobTurned = [this](std::string const& id, int value) {
+		if (session_.setValue(id, value)) refreshGrid();
+	};
+	frontPanel_.onPageChanged = [this]() { updateKnobMarks(); };
+	knobStatus_.setTooltip("The BCR2000's knobs edit the numbered cells, and its first two lower right buttons turn the page. "
+		"Click to load the layout into the BCR2000 again, e.g. after recalling one of its own presets.");
+	knobStatus_.onClick = [this]() { frontPanel_.reload(); };
+	addChildComponent(knobStatus_);
+
 	addChildComponent(viewSelector_);
 	viewSelector_.setVisible(showParams_);
 	viewSelector_.addItem("Raw hex", 1);
@@ -85,6 +94,7 @@ void PatchTextBox::fillTextBox(std::shared_ptr<midikraft::PatchHolder> patch)
 	viewSelector_.clear(dontSendNotification);
 	auto parameters = session_.canEdit() ? session_.parameters() : (patch ? patch_parameters::parametersFor(*patch) : midikraft::PatchParameters{});
 	bool hasGrid = !parameters.empty();
+	syncFrontPanel(parameters);
 	grid_.setParameters(std::move(parameters));
 	grid_.setEditable(session_.canEdit());
 	grid_.setChangedIds(session_.changedIds());
@@ -142,9 +152,26 @@ void PatchTextBox::discardEdits()
 }
 
 void PatchTextBox::refreshGrid() {
-	grid_.setParameters(session_.parameters());
+	auto parameters = session_.parameters();
+	syncFrontPanel(parameters);
+	grid_.setParameters(std::move(parameters));
 	grid_.setChangedIds(session_.changedIds());
 	updateEditButtons();
+}
+
+void PatchTextBox::syncFrontPanel(midikraft::PatchParameters const& parameters) {
+	frontPanel_.show(parameters, session_.canEdit());
+	updateKnobMarks();
+}
+
+void PatchTextBox::updateKnobMarks() {
+	grid_.setKnobAssignments(frontPanel_.knobAssignments());
+	auto status = String::fromUTF8(frontPanel_.status().c_str());
+	if (status != knobStatus_.getButtonText()) {
+		knobStatus_.setButtonText(status);
+		updateEditButtons();
+		resized();
+	}
 }
 
 void PatchTextBox::updateEditButtons() {
@@ -152,6 +179,7 @@ void PatchTextBox::updateEditButtons() {
 	bool dirty = session_.isDirty();
 	saveEdits_.setVisible(shown);
 	revertEdits_.setVisible(shown);
+	knobStatus_.setVisible(shown && knobStatus_.getButtonText().isNotEmpty());
 	saveEdits_.setEnabled(dirty);
 	revertEdits_.setEnabled(dirty);
 }
@@ -176,6 +204,7 @@ void PatchTextBox::resized()
 	if (editButtonsShown()) {
 		revertEdits_.setBounds(topRow.removeFromRight(70).withTrimmedLeft(4));
 		saveEdits_.setBounds(topRow.removeFromRight(100).withTrimmedLeft(4));
+		if (knobStatus_.isVisible()) knobStatus_.setBounds(topRow.removeFromRight(std::min(260, topRow.getWidth() / 2)).withTrimmedLeft(4));
 	}
 	viewSelector_.setBounds(topRow);
 

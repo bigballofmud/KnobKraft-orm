@@ -64,6 +64,13 @@ void PatchParameterGrid::setChangedIds(std::set<std::string> changedIds)
 	repaint();
 }
 
+void PatchParameterGrid::setKnobAssignments(std::map<std::string, int> knobs)
+{
+	if (knobs == knobs_) return;
+	knobs_ = std::move(knobs);
+	repaint();
+}
+
 midikraft::PatchParameter const* PatchParameterGrid::parameterAt(Point<int> position) const
 {
 	for (auto const& cell : layoutCells(getWidth(), nullptr, nullptr)) {
@@ -154,6 +161,7 @@ void PatchParameterGrid::paint(Graphics& g)
 	auto text = getLookAndFeel().findColour(Label::textColourId);
 	auto cellColour = background.contrasting(0.06f);
 	auto changedColour = getLookAndFeel().findColour(Slider::thumbColourId);
+	auto knobColour = getLookAndFeel().findColour(TextButton::buttonOnColourId);
 
 	std::vector<std::pair<String, Rectangle<int>>> headers;
 	auto cells = layoutCells(getWidth(), &headers, nullptr);
@@ -172,6 +180,17 @@ void PatchParameterGrid::paint(Graphics& g)
 		if (changedIds_.count(parameter.id)) {
 			g.setColour(changedColour);
 			g.drawRoundedRectangle(area.toFloat().reduced(0.75f), 4.0f, 1.5f);
+		}
+		auto knob = knobs_.find(parameter.id);
+		if (knob != knobs_.end()) {
+			// A small badge with the knob number in the top right corner
+			auto badge = Rectangle<float>(static_cast<float>(area.getRight() - 22), static_cast<float>(area.getY() + 3), 19.0f, 13.0f);
+			g.setColour(knobColour);
+			g.fillRoundedRectangle(badge, 3.0f);
+			g.setColour(knobColour.contrasting(0.8f));
+			g.setFont(FontOptions(10.0f, Font::bold));
+			g.drawText(String(knob->second), badge, Justification::centred, false);
+			area.removeFromRight(22);
 		}
 		area = area.reduced(6, 3);
 		g.setColour(text.withAlpha(0.6f));
@@ -193,6 +212,10 @@ String PatchParameterGrid::getTooltip()
 			tip << "\nRaw value " << parameter.value;
 			if (parameter.minValue && parameter.maxValue) {
 				tip << " (range " << *parameter.minValue << " to " << *parameter.maxValue << ")";
+			}
+			auto knob = knobs_.find(parameter.id);
+			if (knob != knobs_.end()) {
+				tip << "\nOn BCR2000 knob " << knob->second;
 			}
 			if (editable_ && !parameter.editable) {
 				tip << "\nCan't be edited here";

@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT
 #include "doctest/doctest.h"
 
+#include "The-Orm/KnobPages.h"
 #include "The-Orm/PatchCopyName.h"
 #include "The-Orm/PatchEditSession.h"
 #include "The-Orm/PatchParameterViews.h"
@@ -260,4 +261,109 @@ TEST_CASE("MKS-80 shows and edits the upper and lower sections") {
 		CAPTURE(i);
 		CHECK(lower->data()[i] == original->data()[i]);
 	}
+}
+
+namespace {
+	midikraft::PatchParameter knobParameter(std::string const& id, std::string const& group, int minValue, int maxValue, int value = 0) {
+		midikraft::PatchParameter parameter;
+		parameter.id = id;
+		parameter.name = id;
+		parameter.group = group;
+		parameter.minValue = minValue;
+		parameter.maxValue = maxValue;
+		parameter.value = value;
+		return parameter;
+	}
+}
+
+TEST_CASE("BCR2000 pages follow the grid sections, 32 knobs at most") {
+	midikraft::PatchParameters parameters;
+	for (int i = 0; i < 4; ++i) parameters.push_back(knobParameter("c" + std::to_string(i), "Common", 0, 7));
+	for (int i = 0; i < 40; ++i) parameters.push_back(knobParameter("p" + std::to_string(i), "Partial 1", 0, 100));
+	auto readOnly = knobParameter("name", "Common", 0, 0);
+	parameters.push_back(readOnly); // No range: no knob
+	auto locked = knobParameter("locked", "Common", 0, 9);
+	locked.editable = false;
+	parameters.push_back(locked);
+	parameters.push_back(knobParameter("s0", "String 1", 0, 1));
+
+	auto pages = knob_pages::makePages(parameters);
+	REQUIRE(pages.size() == 4);
+	CHECK(pages[0].title == "Common");
+	CHECK(pages[0].ids == std::vector<std::string>{ "c0", "c1", "c2", "c3" });
+	CHECK(pages[1].title == "Partial 1 (1/2)");
+	CHECK(pages[1].ids.size() == 32);
+	CHECK(pages[1].ids.front() == "p0");
+	CHECK(pages[2].title == "Partial 1 (2/2)");
+	CHECK(pages[2].ids.size() == 8);
+	CHECK(pages[2].ids.front() == "p32");
+	CHECK(pages[3].title == "String 1");
+
+	// Another patch keeps the page by title, else the position
+	CHECK(knob_pages::pageIndexFor(pages, "String 1", 0) == 3);
+	CHECK(knob_pages::pageIndexFor(pages, "Partial 7", 2) == 2);
+	CHECK(knob_pages::pageIndexFor(pages, "Partial 7", 9) == 3);
+	CHECK(knob_pages::pageIndexFor({}, "Common", 0) == -1);
+}
+
+TEST_CASE("BCR2000 knobs are the top row, then the three rows below") {
+	CHECK(knob_pages::encoderNumber(0) == 1);
+	CHECK(knob_pages::encoderNumber(7) == 8);
+	CHECK(knob_pages::encoderNumber(8) == 33);
+	CHECK(knob_pages::encoderNumber(31) == 56);
+	CHECK(knob_pages::knobForController(1) == 0);
+	CHECK(knob_pages::knobForController(32) == 31);
+	CHECK(knob_pages::knobForController(33) == -1);
+	CHECK(knob_pages::knobForController(knob_pages::kNextPageController) == -1);
+}
+
+TEST_CASE("BCR2000 knobs send parameter values as they are when they fit, else scaled") {
+	auto choice = knobParameter("type", "Common", 0, 7);
+	auto range = knob_pages::knobRange(choice);
+	CHECK(range.low == 0);
+	CHECK(range.high == 7);
+	CHECK_FALSE(range.scaled);
+	CHECK(knob_pages::toKnobValue(choice, 5) == 5);
+	CHECK(knob_pages::fromKnobValue(choice, 5) == 5);
+	CHECK(knob_pages::fromKnobValue(choice, 100) == 7); // Clamped to the range
+
+	auto wide = knobParameter("wide", "", 0, 254);
+	CHECK(knob_pages::knobRange(wide).scaled);
+	CHECK(knob_pages::toKnobValue(wide, 0) == 0);
+	CHECK(knob_pages::toKnobValue(wide, 254) == 127);
+	CHECK(knob_pages::fromKnobValue(wide, 0) == 0);
+	CHECK(knob_pages::fromKnobValue(wide, 127) == 254);
+
+	auto signedRange = knobParameter("signed", "", -24, 24);
+	CHECK(knob_pages::knobRange(signedRange).scaled);
+	CHECK(knob_pages::fromKnobValue(signedRange, 0) == -24);
+	CHECK(knob_pages::fromKnobValue(signedRange, 127) == 24);
+	CHECK(knob_pages::toKnobValue(signedRange, 0) == 64);
+	for (int value = -24; value <= 24; ++value) {
+		CAPTURE(value);
+		CHECK(knob_pages::fromKnobValue(signedRange, knob_pages::toKnobValue(signedRange, value)) == value);
+	}
+}
+
+TEST_CASE("BCR2000 setup sets each knob's range and switches unused knobs off") {
+	midikraft::PatchParameters parameters{ knobParameter("type", "Common", 0, 7), knobParameter("level", "Common", 0, 100) };
+	auto pages = knob_pages::makePages(parameters);
+	REQUIRE(pages.size() == 1);
+	auto page = knob_pages::pageBcl(pages[0], parameters);
+	CHECK(page.rfind("$rev R1\n", 0) == 0);
+	CHECK(page.find("$encoder 1\n  .easypar CC 16 1 0 7 absolute\n  .mode 1dot") != std::string::npos);
+	CHECK(page.find("$encoder 2\n  .easypar CC 16 2 0 100 absolute") != std::string::npos);
+	CHECK(page.find("$encoder 3\n  .easypar CC 16 3 0 0 absolute\n  .mode off") != std::string::npos);
+	CHECK(page.find("$encoder 56\n") != std::string::npos);
+	CHECK(page.find("$preset") == std::string::npos);
+	CHECK(page.size() > 6);
+	CHECK(page.substr(page.size() - 5) == "$end\n");
+
+	auto preset = knob_pages::presetBcl(pages[0], parameters);
+	CHECK(preset.find("  .name 'KnobKraft grid'\n") != std::string::npos);
+	CHECK(preset.find("  .init\n") != std::string::npos);
+	CHECK(preset.find("  .fkeys off\n") != std::string::npos); // The page buttons must send, not change presets
+	CHECK(preset.find("$button 49\n  .easypar CC 16 102 127 0 toggleoff") != std::string::npos);
+	CHECK(preset.find("$button 50\n  .easypar CC 16 103 127 0 toggleoff") != std::string::npos);
+	CHECK(preset.find("$store") == std::string::npos); // Never overwrites the BCR2000's own presets
 }

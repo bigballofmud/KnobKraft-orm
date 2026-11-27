@@ -12,6 +12,7 @@
 #include "PatchTextCapability.h"
 #include "PatchParameterGrid.h"
 #include "PatchEditSession.h"
+#include "BCR2000FrontPanel.h"
 
 class PatchTextBox : public Component {
 public:
@@ -43,6 +44,8 @@ private:
 	bool editButtonsShown() const;
 	void refreshGrid();
 	void updateEditButtons();
+	void syncFrontPanel(midikraft::PatchParameters const& parameters);
+	void updateKnobMarks();
 
 	std::function<void()> forceResize_;
 	bool showParams_;
@@ -59,6 +62,8 @@ private:
 	PatchEditSession session_;
 	TextButton saveEdits_;
 	TextButton revertEdits_;
+	BCR2000FrontPanel frontPanel_;
+	TextButton knobStatus_;
 };
 
 
