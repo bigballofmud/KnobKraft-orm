@@ -56,7 +56,28 @@ namespace midikraft {
 
 	std::vector<std::shared_ptr<SynthParameterDefinition>> MKS80_Patch::allParameterDefinitions() const
 	{
-		return MKS80_Parameter::allParameterDefinitions;
+		// Copies for the upper section, as the shared definitions stand for the lower one
+		static const std::vector<std::shared_ptr<SynthParameterDefinition>> bothSections = [] {
+			std::vector<std::shared_ptr<SynthParameterDefinition>> result;
+			for (auto section : { MKS80_Parameter::SynthSection::UPPER, MKS80_Parameter::SynthSection::LOWER }) {
+				for (auto const& definition : MKS80_Parameter::allParameterDefinitions) {
+					auto mks = std::dynamic_pointer_cast<MKS80_Parameter>(definition);
+					if (!mks) continue;
+					auto copy = std::make_shared<MKS80_Parameter>(*mks);
+					copy->setSection(section);
+					result.push_back(copy);
+				}
+			}
+			return result;
+		}();
+		return bothSections;
+	}
+
+	std::string MKS80_Patch::parameterGroup(SynthParameterDefinition const& definition) const
+	{
+		auto mks = dynamic_cast<MKS80_Parameter const*>(&definition);
+		if (!mks) return {};
+		return mks->section() == MKS80_Parameter::SynthSection::UPPER ? "Upper" : "Lower";
 	}
 
 	juce::MidiMessage MKS80_Patch::buildAPRMessage(APR_Section section, MidiChannel channel) const

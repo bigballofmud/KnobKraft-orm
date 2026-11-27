@@ -224,3 +224,40 @@ TEST_CASE("Live sends wait as long as the synth needs for the messages") {
 	// Native synths send at full speed unless they say otherwise
 	CHECK(std::make_shared<midikraft::Matrix1000>()->generalMessageDelayMs() == 0);
 }
+
+TEST_CASE("MKS-80 shows and edits the upper and lower sections") {
+	auto synth = std::make_shared<midikraft::MKS80>();
+	auto original = legalPatch(synth, 126);
+	auto parameters = patch_parameters::parametersFor(synth, original);
+	REQUIRE(parameters.size() % 2 == 0);
+	auto half = parameters.size() / 2;
+	for (size_t i = 0; i < parameters.size(); ++i) {
+		CAPTURE(parameters[i].id);
+		CHECK(parameters[i].group == (i < half ? "Upper" : "Lower"));
+	}
+	auto values = valuesById(parameters);
+	REQUIRE(values.count("LFO1_RATE_U"));
+	REQUIRE(values.count("LFO1_RATE_L"));
+
+	// Tone data: upper at bytes 30-77, lower at 78-125
+	auto upper = patch_parameters::applyNativeValue(synth, original, MidiProgramNumber::fromZeroBase(0), "LFO1_RATE_U", 77);
+	REQUIRE(upper);
+	auto upperValues = valuesById(patch_parameters::parametersFor(synth, upper));
+	CHECK(upperValues["LFO1_RATE_U"] == 77);
+	CHECK(upperValues["LFO1_RATE_L"] == values["LFO1_RATE_L"]);
+	for (size_t i = 0; i < 126; ++i) {
+		if (i >= 30 && i < 78) continue;
+		CAPTURE(i);
+		CHECK(upper->data()[i] == original->data()[i]);
+	}
+
+	// Patch data: upper at bytes 0-14, lower at 15-29
+	auto lower = patch_parameters::applyNativeValue(synth, original, MidiProgramNumber::fromZeroBase(0), "LFO2_RATE_L", 55);
+	REQUIRE(lower);
+	CHECK(valuesById(patch_parameters::parametersFor(synth, lower))["LFO2_RATE_L"] == 55);
+	for (size_t i = 0; i < 126; ++i) {
+		if (i >= 15 && i < 30) continue;
+		CAPTURE(i);
+		CHECK(lower->data()[i] == original->data()[i]);
+	}
+}

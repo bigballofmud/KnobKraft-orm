@@ -34,7 +34,9 @@ namespace midikraft {
 		int value(SynthParameterDefinition const &param) const;
 		SynthParameterDefinition const & paramBySysexIndex(int sysexIndex) const;
 
+		// Both sections, upper first; MKS80_Parameter::allParameterDefinitions has the lower one only
 		virtual std::vector<std::shared_ptr<SynthParameterDefinition>> allParameterDefinitions() const override;
+		virtual std::string parameterGroup(SynthParameterDefinition const& definition) const override;
 
 		// Support APR format creation
 		MidiMessage buildAPRMessage(APR_Section section, MidiChannel channel) const;

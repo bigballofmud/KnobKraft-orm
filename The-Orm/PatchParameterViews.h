@@ -77,7 +77,7 @@ namespace patch_parameters {
 					midikraft::PatchParameter parameter;
 					parameter.id = nativeId(definition->name(), layer, layers);
 					parameter.name = definition->description().empty() ? definition->name() : definition->description();
-					parameter.group = layers > 1 ? layerGroup(data, layer) : "";
+					parameter.group = layers > 1 ? layerGroup(data, layer) : detailed->parameterGroup(*definition);
 					parameter.text = definition->valueInPatchToText(*data);
 					auto intParameter = editableInt(definition);
 					int value = 0;
